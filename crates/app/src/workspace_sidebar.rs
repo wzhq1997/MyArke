@@ -5245,30 +5245,16 @@ fn here_layer() -> AnyElement {
 }
 
 /// Selected tab in the single top row. The top corners keep the tab shape; the bottom is square
-/// and joins the sheet below with no outline or gap. A short line in the chosen accent colors the
-/// selection without a heavy fill.
+/// and joins the sheet below with no outline or gap. It uses the very same paper fill as the
+/// content sheet (same div, same color), so the two composite to one surface under Mica too. A
+/// short line in the chosen accent colors the selection without a heavy fill.
 fn joined_tab_surface() -> AnyElement {
     div()
         .absolute()
         .inset_0()
-        .child(canvas(
-            |_, _, _| (),
-            |bounds, _, window, _| {
-                let origin = bounds.origin;
-                let w = bounds.size.width;
-                let h = bounds.size.height;
-                let r = theme::r_8();
-                let at = |x: Pixels, y: Pixels| gpui::point(origin.x + x, origin.y + y);
-                let mut path = gpui::Path::new(at(px(0.), r));
-                path.curve_to(at(r, px(0.)), at(px(0.), px(0.)));
-                path.line_to(at(w - r, px(0.)));
-                path.curve_to(at(w, r), at(w, px(0.)));
-                path.line_to(at(w, h));
-                path.line_to(at(px(0.), h));
-                path.line_to(at(px(0.), r));
-                window.paint_path(path, theme::paper());
-            },
-        ))
+        .rounded_t(theme::r_8())
+        .rounded_b_none()
+        .bg(theme::paper())
         .child(
             div()
                 .absolute()
