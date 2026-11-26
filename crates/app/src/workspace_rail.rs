@@ -35,10 +35,9 @@ pub(super) struct SidebarUi {
     pub(super) tabs_revealed: std::cell::Cell<Option<(usize, gpui::Pixels)>>,
     rail_places_scroll: gpui::ScrollHandle,
     rail_tabs_scroll: gpui::ScrollHandle,
-    /// Tabs on top: the strip, which scrolls sideways when the tabs don't fit, and the tab last
-    /// scrolled into view there (the active one, once each time it changes).
+    /// Tabs on top: the strip, which scrolls sideways when the tabs don't fit. The active tab is
+    /// re-scrolled whenever it is not fully in view, since its width can change with the search box.
     pub(super) strip_scroll: gpui::ScrollHandle,
-    pub(super) strip_revealed: std::cell::Cell<Option<(usize, gpui::Pixels)>>,
     /// The open-over-the-content sidebar just closed and fades out (serial, for the animation id).
     peek_ghost: Option<u64>,
     peek_ghost_task: Option<gpui::Task<()>>,

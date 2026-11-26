@@ -7,8 +7,9 @@
 //! splitting the tab doesn't move anything. With tabs on top the strip shares this row, taking the
 //! space from its left edge up to the search box ([`Self::render_title_row_compact`]).
 //! - With tabs on the side the search box rests at about [`SEARCH_SHARE`] of the row, centered on
-//!   it. With tabs on top it rests as just a magnifier at the right end, growing up to
-//!   [`search_compact_max`] when used. Long text never grows over the buttons.
+//!   it. With tabs on top it rests as just a magnifier at the right end, opens to
+//!   [`search_compact_min`] when clicked, and grows up to [`search_compact_max`] with a longer
+//!   query. Long text never grows over the buttons.
 //! - While it has focus, the pane it searches is outlined.
 //! - Every empty part of the row (between controls, above and below them) drags the window; a
 //!   double click there maximizes it.
@@ -44,9 +45,15 @@ fn search_rest_max() -> gpui::Pixels {
     crate::theme::scaled_px(600.)
 }
 /// Longest the search box gets in the single top row used with tabs on top. It rests as just its
-/// magnifier and grows into this cap when focused or holding a query.
+/// magnifier, opens to [`search_compact_min`] when clicked, and grows into this cap with a longer
+/// query.
 fn search_compact_max() -> gpui::Pixels {
-    crate::theme::scaled_px(260.)
+    crate::theme::scaled_px(240.)
+}
+/// Width of the search box once the magnifier is clicked with tabs on top. Longer queries grow
+/// toward [`search_compact_max`] instead.
+fn search_compact_min() -> gpui::Pixels {
+    crate::theme::scaled_px(180.)
 }
 /// A path bar narrower than this shows only "… › current folder" (no trailing ›, little blank
 /// end), so the current folder's name keeps some room.
@@ -166,15 +173,21 @@ impl Explorer {
         self.settle_search_width(state, target, window, row > px(0.))
     }
 
-    /// The search box in the merged top row (tabs on top): a magnifier at rest, growing up to
-    /// [`search_compact_max`] when focused or holding a query.
+    /// The search box in the merged top row (tabs on top): a magnifier at rest, opening to
+    /// [`search_compact_min`] when focused and growing up to [`search_compact_max`] with a query.
     fn search_box_width_compact(
         &mut self,
         state: SearchBox,
         content: Pixels,
         window: &Window,
     ) -> Pixels {
-        let target = layout::search_width(search_compact_max(), state, theme::h_ctl(), content);
+        let target = layout::search_width_with_min(
+            search_compact_max(),
+            state,
+            theme::h_ctl(),
+            content,
+            search_compact_min(),
+        );
         self.settle_search_width(state, target, window, true)
     }
 
