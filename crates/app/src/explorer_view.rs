@@ -3245,6 +3245,12 @@ impl Render for Explorer {
         crate::a11y::sync(window);
         self.before_render(window, cx);
         let searching = self.search_box_state(window, cx) == layout::SearchBox::Typing;
+        // With tabs on top the sheet meets the selected tab, so it drops the seam-causing outline.
+        let horizontal = cx
+            .try_global::<crate::settings::GlobalSettings>()
+            .is_some_and(|g| {
+                g.0.read(cx).settings.tab_layout == crate::settings::TabLayout::Horizontal
+            });
         div()
             .id("explorer")
             .key_context("Explorer")
@@ -3274,7 +3280,11 @@ impl Render for Explorer {
                     .mb(theme::s_8())
                     .rounded(theme::r_12())
                     .bg(theme::paper())
-                    .shadow(theme::elev_2())
+                    .shadow(if horizontal {
+                        theme::elev_2_joined()
+                    } else {
+                        theme::elev_2()
+                    })
                     .children(backdrop_layer())
                     .child(self.render_pane_row(window, cx))
                     .child(

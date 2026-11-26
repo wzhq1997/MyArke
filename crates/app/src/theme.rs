@@ -1237,6 +1237,16 @@ pub(crate) fn elev_2() -> Vec<BoxShadow> {
         vec![hairline(line()), drop]
     }
 }
+/// Raised paper whose top is joined to the selected tab in the single top row. The hairline of
+/// [`elev_2`] would draw a seam across the junction, and its soft shadow would spill upward over
+/// the tab, so the shadow here sits lower and tighter.
+pub(crate) fn elev_2_joined() -> Vec<BoxShadow> {
+    vec![drop_shadow(
+        alpha(p().veil, if is_dark() { 0.35 } else { 0.10 }),
+        16.,
+        16.,
+    )]
+}
 /// Floating surfaces: menus, popovers, tooltips, toasts, drag previews. They are always opaque
 /// (`overlay()`), so the dark theme can use the outline plus a lit inner edge.
 /// Tooltips: lighter than menus. No dark outline (on a small label it reads as a black ring), a

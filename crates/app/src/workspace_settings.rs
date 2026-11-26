@@ -1204,7 +1204,11 @@ impl Workspace {
                         .mb(theme::s_8())
                         .rounded(theme::r_12())
                         .bg(theme::paper())
-                        .shadow(theme::elev_2())
+                        .shadow(if horizontal {
+                            theme::elev_2_joined()
+                        } else {
+                            theme::elev_2()
+                        })
                         .overflow_hidden()
                         .child(
                             div()

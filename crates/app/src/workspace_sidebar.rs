@@ -4591,6 +4591,7 @@ impl Workspace {
         let tab: &Tab = &self.tabs[ix];
         let active = ix == self.active;
         let split = tab.is_split();
+        let horizontal = Self::horizontal_tabs(cx);
         let group = SharedString::from(format!("tab-{ix}"));
         // Tabs showing Home, Settings or the Recycle Bin use that page's name.
         let titles: Vec<SharedString> = tab
@@ -4606,7 +4607,10 @@ impl Workspace {
             .id(("tab", ix))
             .debug_selector(|| format!("tab-{ix}"))
             .group(group.clone())
-            .h(if split {
+            .h(if horizontal && active {
+                // On top the selected tab fills the row, so its paper joins the sheet below.
+                theme::h_bar()
+            } else if split {
                 theme::h_row() + theme::s_8()
             } else if tab.pinned {
                 // Pinned tabs are a tighter group at the top.
@@ -4625,8 +4629,16 @@ impl Workspace {
             .cursor_pointer()
             // Slides from the old position after a reorder (the offset is relative).
             .relative()
-            // The active tab shares the paper surface with the list.
-            .when(active, |d| d.child(here_layer()).text_color(theme::text()))
+            // The active tab shares the paper surface with the list. On top that surface is drawn
+            // as a tab that flares into the sheet instead of an inset rounded tile.
+            .when(active, |d| {
+                let surface = if horizontal {
+                    joined_tab_surface()
+                } else {
+                    here_layer()
+                };
+                d.child(surface).text_color(theme::text())
+            })
             // Asked for again in the background (middle click): fades out from the accent color.
             .when_some(self.tab_flash(ix), |d, serial| {
                 d.child(
@@ -4997,6 +5009,36 @@ fn here_layer() -> AnyElement {
         .border_1()
         .border_color(theme::line())
         .into_any_element()
+}
+
+/// Selected tab in the single top row. Its top corners are rounded like a tab, while the bottom
+/// corners flare outward into the sheet below, with no outline or gap between them. Painted rather
+/// than composed from divs so the flares stay smooth at any scaling.
+fn joined_tab_surface() -> AnyElement {
+    canvas(
+        |_, _, _| (),
+        |bounds, _, window, _| {
+            let origin = bounds.origin;
+            let w = bounds.size.width;
+            let h = bounds.size.height;
+            let r = theme::r_8();
+            let ear = theme::s_8();
+            let at = |x: Pixels, y: Pixels| gpui::point(origin.x + x, origin.y + y);
+            let mut path = gpui::Path::new(at(px(0.), r));
+            path.curve_to(at(r, px(0.)), at(px(0.), px(0.)));
+            path.line_to(at(w - r, px(0.)));
+            path.curve_to(at(w, r), at(w, px(0.)));
+            path.line_to(at(w, h - ear));
+            path.curve_to(at(w + ear, h), at(w + ear, h - ear));
+            path.line_to(at(px(0.) - ear, h));
+            path.curve_to(at(px(0.), h - ear), at(px(0.) - ear, h - ear));
+            path.line_to(at(px(0.), r));
+            window.paint_path(path, theme::paper());
+        },
+    )
+    .absolute()
+    .inset_0()
+    .into_any_element()
 }
 
 /// Whether `path` is on the drive whose root is `drive` (letters in any case).
