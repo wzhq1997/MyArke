@@ -813,6 +813,7 @@ fn perform_recorded(
             paths,
             recycle: true,
         } => Some(paths.as_slice()),
+        FileOp::DissolveFolder { folder } => Some(std::slice::from_ref(folder)),
         _ => None,
     };
     let shorts = recycled.map_or_default(short_forms);
@@ -838,6 +839,16 @@ fn perform_recorded(
         }
     }
     explain(&mut failed);
+    if let FileOp::DissolveFolder { folder } = op
+        && let Some(pos) = done
+            .iter()
+            .position(|d| matches!(d, Done::Relocated { from, .. } if from == folder))
+        && pos > 0
+    {
+        // Undo queues its moves in order: restore the folder before putting its old contents back.
+        let restored = done.remove(pos);
+        done.insert(0, restored);
+    }
     // With Arke's own progress there is no error UI (FOF_NOERRORUI); report failures at the end.
     let result = match result {
         Ok(_) if !failed.is_empty() => Err(ShellError::Items { failed }),
@@ -1219,6 +1230,35 @@ fn run(
                         }
                         Err(error) => skipped.extend(unqueued(path, &error)),
                     }
+                }
+                if queued == 0 {
+                    return Ok(OpOutcome::Done);
+                }
+            }
+            FileOp::DissolveFolder { folder } => {
+                // The contents and the now-empty folder go through one batch: the engine performs
+                // them in the order they were queued, and reports all of them for one undo step.
+                let dest = folder.parent().ok_or_else(|| {
+                    ShellError::Io(std::io::Error::new(
+                        std::io::ErrorKind::InvalidInput,
+                        "folder has no parent",
+                    ))
+                })?;
+                let dest_item = shell_item(dest)?;
+                flags |= FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE;
+                let mut queued = 0usize;
+                for entry in std::fs::read_dir(arke_core::path::verbatim(folder))? {
+                    let path = arke_core::path::unverbatim(&entry?.path());
+                    fo.MoveItem(&shell_item(&path)?, &dest_item, PCWSTR::null(), None)?;
+                    queued += 1;
+                }
+                let w = wide(folder.as_os_str());
+                match SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(w.as_ptr()), None) {
+                    Ok(item) => {
+                        fo.DeleteItem(&item, None)?;
+                        queued += 1;
+                    }
+                    Err(error) => skipped.extend(unqueued(folder, &error)),
                 }
                 if queued == 0 {
                     return Ok(OpOutcome::Done);

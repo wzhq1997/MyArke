@@ -333,6 +333,7 @@ impl RemoteShell {
             FileOp::NewFolder { parent, .. } | FileOp::NewFile { parent, .. } => {
                 remote(parent).is_some()
             }
+            FileOp::DissolveFolder { folder } => remote(folder).is_some(),
         }
     }
 
@@ -376,6 +377,8 @@ impl RemoteShell {
             FileOp::NewFile { parent, name } => {
                 Ok(remotes.create_empty(&Self::need(parent)?.join(name))?)
             }
+            // The menu entry is local-only; keep remote paths safe if one reaches here.
+            FileOp::DissolveFolder { .. } => Err(ShellError::Unsupported),
         }
     }
 

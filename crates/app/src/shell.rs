@@ -477,6 +477,11 @@ pub(crate) enum FileOp {
         sources: Vec<PathBuf>,
         dest: PathBuf,
     },
+    /// Move a folder's contents into its parent, then recycle the now-empty folder. The moves and
+    /// the recycle run in one copy-engine batch, so undo restores them as one operation.
+    DissolveFolder {
+        folder: PathBuf,
+    },
     /// `recycle` moves to the Recycle Bin; false deletes permanently. Permanent deletes do not prompt
     /// again, so the caller must confirm first (Arke's own dialog).
     Delete {
@@ -508,6 +513,11 @@ impl FileOp {
         let paths = match self {
             Self::Copy { sources, .. } | Self::Move { sources, .. } => sources,
             Self::Delete { paths, .. } => paths,
+            Self::DissolveFolder { folder } => {
+                return folder
+                    .file_name()
+                    .map(|n| (n.to_string_lossy().into_owned(), 1));
+            }
             _ => return None,
         };
         let first = paths.first()?.file_name()?.to_string_lossy().into_owned();
@@ -518,7 +528,10 @@ impl FileOp {
     pub(crate) const fn listed(&self) -> bool {
         matches!(
             self,
-            Self::Copy { .. } | Self::Move { .. } | Self::Delete { .. }
+            Self::Copy { .. }
+                | Self::Move { .. }
+                | Self::Delete { .. }
+                | Self::DissolveFolder { .. }
         )
     }
 
@@ -527,6 +540,7 @@ impl FileOp {
         match self {
             Self::Copy { .. } => "op.copy",
             Self::Move { .. } => "op.move",
+            Self::DissolveFolder { .. } => "op.dissolve_folder",
             Self::Delete { recycle: true, .. } => "op.recycle",
             Self::Delete { recycle: false, .. } => "op.delete_permanently",
             Self::Rename { .. } | Self::RenameMany { .. } => "op.rename",
@@ -600,9 +614,10 @@ pub(crate) fn redo_of(op: &FileOp, undo: &Undo) -> Option<FileOp> {
                 dest: dest.clone(),
             })
         }
-        FileOp::Rename { .. } | FileOp::NewFolder { .. } | FileOp::NewFile { .. } => {
-            Some(op.clone())
-        }
+        FileOp::Rename { .. }
+        | FileOp::NewFolder { .. }
+        | FileOp::NewFile { .. }
+        | FileOp::DissolveFolder { .. } => Some(op.clone()),
     }
 }
 

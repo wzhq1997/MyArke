@@ -488,6 +488,14 @@ impl Shell for FakeShell {
             FileOp::NewFolder { parent, name } | FileOp::NewFile { parent, name } => {
                 Some(Undo::Remove(vec![parent.join(name)]))
             }
+            FileOp::DissolveFolder { folder } => {
+                Some(put_back(std::slice::from_ref(folder), &|p| {
+                    format!(
+                        r"C:\$Recycle.Bin\{}",
+                        p.file_name().unwrap().to_string_lossy()
+                    )
+                }))
+            }
         };
         (self.file_op(op, owner), undo)
     }
@@ -3383,6 +3391,12 @@ fn apply_to_fake_fs(fs: &Arc<FakeFs>, shell: &FakeShell) {
             }
         }
         FileOp::Copy { .. } | FileOp::Move { .. } => {}
+        FileOp::DissolveFolder { folder } => {
+            let parent = folder.parent().unwrap();
+            let name = folder.file_name().unwrap().to_str().unwrap();
+            fs.remove_dir(folder);
+            fs.emit_changed(parent, &[name]);
+        }
     }));
 }
 
@@ -7987,6 +8001,48 @@ fn move_selection_into_a_new_folder(cx: &mut TestAppContext) {
             },
         ]
     );
+}
+
+/// "Dissolve folder": one operation moves the folder's contents up and recycles the folder;
+/// undo puts it back in one step. The entry is only offered for a folder, not for a file.
+#[gpui::test]
+fn dissolve_folder_is_one_operation_and_one_undo(cx: &mut TestAppContext) {
+    let fs = FakeFs::new();
+    let dir_path = Path::new(r"C:\d");
+    fs.insert_dir(dir_path, vec![dir("album"), file("loose.txt", 1)]);
+    let shell = Arc::new(FakeShell::default());
+    apply_to_fake_fs(&fs, &shell);
+    let (view, cx) = setup(cx, Arc::clone(&fs), Arc::clone(&shell), r"C:\d");
+    wait_until(cx, &view, "load", loaded(r"C:\d"));
+
+    // A file has no dissolve entry.
+    cx.simulate_keystrokes("down down");
+    right_click(&view, cx, Some(1));
+    let labels = menu_labels(&view, cx).unwrap();
+    let label = t!("menu.dissolve_folder").into_owned();
+    assert!(
+        !labels.contains(&label),
+        "a file can't be dissolved: {labels:?}"
+    );
+
+    // The folder does.
+    cx.simulate_keystrokes("up");
+    right_click(&view, cx, Some(0));
+    let labels = menu_labels(&view, cx).unwrap();
+    assert!(labels.contains(&label), "folder menu: {labels:?}");
+    run_command(&view, cx, MenuCommand::DissolveFolder);
+    wait_until(cx, &view, "dissolve op", |_| shell.ops().len() == 1);
+    assert_eq!(
+        shell.ops(),
+        [FileOp::DissolveFolder {
+            folder: PathBuf::from(r"C:\d\album"),
+        }]
+    );
+
+    cx.simulate_keystrokes("ctrl-z");
+    wait_until(cx, &view, "undo dissolve", |_| {
+        shell.undone.lock().len() == 1
+    });
 }
 
 /// Multi-item rename: items renamed in display order to "name (1)", "name (2)", ... keeping

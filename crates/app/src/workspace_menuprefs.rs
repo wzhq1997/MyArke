@@ -131,6 +131,13 @@ pub(crate) const MENU_PREFS: &[MenuPref] = &[
         note: None,
     },
     MenuPref {
+        key: "dissolve_folder",
+        switch_id: Some("menu-pref-dissolve_folder"),
+        icon: Icon::Folder,
+        label: "menu.dissolve_folder",
+        note: Some("menupref.folders"),
+    },
+    MenuPref {
         key: "new_window",
         switch_id: Some("menu-pref-new_window"),
         icon: Icon::External,
@@ -822,6 +829,7 @@ fn preview_rows(s: &Settings) -> Vec<Option<PreviewRow>> {
             Icon::FolderPlus,
             "menu.move_to_new_folder",
         ),
+        row("dissolve_folder", Icon::Folder, "menu.dissolve_folder"),
         None,
         row("new_window", Icon::External, "menu.open_new_window"),
         Some(preview_row(Some("open_with"), Icon::OpenWith, open_with)),
