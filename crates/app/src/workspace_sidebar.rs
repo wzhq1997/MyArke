@@ -2723,21 +2723,8 @@ impl Workspace {
             .clone();
         // A remembered server shows its shares as children when expanded; visiting them must
         // not add a second, flat row for the same share below it.
-        let servers: Vec<PathBuf> = shares
-            .iter()
-            .filter(|p| arke_core::net::bare_server(p).is_some())
-            .cloned()
-            .collect();
-        for share in &shares {
-            if arke_core::net::bare_server(share).is_none()
-                && arke_core::path::parent(share).is_some_and(|parent| {
-                    servers
-                        .iter()
-                        .any(|s| crate::place_names::key(s) == crate::place_names::key(&parent))
-                })
-            {
-                continue;
-            }
+        for share in crate::place_names::net_roots(&shares) {
+            let share = &share;
             self.render_tree(
                 share,
                 crate::place_names::shown_name(&names, share).unwrap_or_else(|| share_label(share)),

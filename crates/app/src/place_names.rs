@@ -5,7 +5,7 @@
 //! touched. An empty name (or the default one) removes the entry and brings the default name back.
 
 use std::collections::BTreeMap;
-use std::path::{Component, Path, Prefix};
+use std::path::{Component, Path, PathBuf, Prefix};
 
 use gpui::{AnyElement, Entity, MouseButton, div, prelude::*};
 use rust_i18n::t;
@@ -33,6 +33,25 @@ pub(crate) fn key(path: &Path) -> String {
         .replace('/', "\\")
         .trim_end_matches('\\')
         .to_lowercase()
+}
+
+/// Network rows to show for remembered places: a share under a remembered bare server is already
+/// that server's child when expanded, so Home and the sidebar both show only the server.
+pub(crate) fn net_roots(places: &[PathBuf]) -> Vec<PathBuf> {
+    let servers: Vec<PathBuf> = places
+        .iter()
+        .filter(|p| arke_core::net::bare_server(p).is_some())
+        .cloned()
+        .collect();
+    places
+        .iter()
+        .filter(|p| {
+            arke_core::net::bare_server(p).is_some()
+                || arke_core::path::parent(p)
+                    .is_none_or(|parent| !servers.iter().any(|s| key(s) == key(&parent)))
+        })
+        .cloned()
+        .collect()
 }
 
 /// The letter of a drive root (`Z:\`), `None` for anything else.
