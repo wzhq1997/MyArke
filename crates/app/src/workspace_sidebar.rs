@@ -713,6 +713,38 @@ fn list_subfolders(
     (dirs, leaves)
 }
 
+/// The shares of `\\server` for the sidebar tree. A server root is not a directory, so
+/// `Fs::read_dir` cannot list it; the shell's `NetProbe` asks Windows instead. Background thread.
+fn list_server_shares(
+    probe: &dyn arke_core::net::NetProbe,
+    server: &str,
+    show_hidden: bool,
+) -> Vec<PathBuf> {
+    let root = PathBuf::from(format!(r"\\{server}"));
+    let mut shares: Vec<PathBuf> = probe
+        .shares(server)
+        .map(|shares| {
+            arke_core::net::share_entries(&shares)
+                .into_iter()
+                .filter(|e| e.is_dir_like() && (show_hidden || !e.is_hidden()))
+                .map(|e| root.join(&*e.name))
+                .take(TREE_MAX_CHILDREN)
+                .collect()
+        })
+        .unwrap_or_else(|err| {
+            log::info!("sidebar: listing shares of {server} failed: {err}");
+            Vec::new()
+        });
+    // Same natural order as other tree children.
+    shares.sort_by(|a, b| {
+        arke_core::sort::natural_cmp(
+            &display_name(a).to_lowercase(),
+            &display_name(b).to_lowercase(),
+        )
+    });
+    shares
+}
+
 /// The places listed under This PC. Network drives go under Network, unless Network is hidden
 /// (`mapped`): then they stay in reach under This PC, as File Explorer lists them (#387).
 const fn in_this_pc(kind: PlaceKind, mapped: bool) -> bool {
@@ -864,12 +896,10 @@ pub(super) fn favorite_tiles(places: &[Place], cx: &mut App) -> Vec<(PathBuf, St
         .collect()
 }
 
-/// Display name: the folder name, or the full path for a drive root (C:\).
+/// Display name: the folder or share name, or the full path for a drive root (C:\). On Windows a
+/// UNC share root is part of the path prefix, so `file_name()` alone would show the whole `\\server\share`.
 pub(super) fn display_name(path: &Path) -> String {
-    path.file_name().map_or_else(
-        || path.display().to_string(),
-        |n| n.to_string_lossy().into_owned(),
-    )
+    arke_core::path::leaf_name(path).unwrap_or_else(|| path.display().to_string())
 }
 
 /// Name of a history entry: its folder's name, or the page's title.
@@ -2727,7 +2757,23 @@ impl Workspace {
             .settings
             .place_names
             .clone();
+        // A remembered server shows its shares as children when expanded; visiting them must
+        // not add a second, flat row for the same share below it.
+        let servers: Vec<PathBuf> = shares
+            .iter()
+            .filter(|p| arke_core::net::bare_server(p).is_some())
+            .cloned()
+            .collect();
         for share in &shares {
+            if arke_core::net::bare_server(share).is_none()
+                && arke_core::path::parent(share).is_some_and(|parent| {
+                    servers
+                        .iter()
+                        .any(|s| crate::place_names::key(s) == crate::place_names::key(&parent))
+                })
+            {
+                continue;
+            }
             self.render_tree(
                 share,
                 crate::place_names::shown_name(&names, share).unwrap_or_else(|| share_label(share)),
@@ -3026,9 +3072,11 @@ impl Workspace {
         }
         let children = self.tree_children.get(path);
         // No chevron when the node was listed with no children, or a background check found no subfolders,
-        // so users do not expand a folder only to find it empty.
-        let leaf = matches!(children, Some(Some(list)) if list.is_empty())
-            || self.tree_leaf.contains(path);
+        // so users do not expand a folder only to find it empty. A server keeps it: shares can
+        // appear later, and a failed NetShareEnum should be retryable.
+        let leaf = arke_core::net::bare_server(path).is_none()
+            && (matches!(children, Some(Some(list)) if list.is_empty())
+                || self.tree_leaf.contains(path));
         let open = path.to_path_buf();
         let tab_path = path.to_path_buf();
         let menu_path = path.to_path_buf();
@@ -3276,13 +3324,20 @@ impl Workspace {
         self.tree_children.entry(path.clone()).or_insert(None);
         let fs = Arc::clone(&self.services.fs);
         let shell = Arc::clone(&self.services.shell);
+        let probe = shell.net_probe();
+        let show_hidden = SettingsStore::global(cx).read(cx).settings.show_hidden;
         let (tx, rx) = flume::bounded::<(Vec<PathBuf>, Vec<PathBuf>)>(1);
         let dir = path.clone();
         let spawned = std::thread::Builder::new()
             .name("tree".into())
             .spawn(move || {
-                let local = shell.is_local_disk(&dir);
-                let _ = tx.send(list_subfolders(fs.as_ref(), &dir, local));
+                if let Some((probe, server)) = probe.as_deref().zip(arke_core::net::share_server(&dir))
+                {
+                    let _ = tx.send((list_server_shares(probe, server, show_hidden), Vec::new()));
+                } else {
+                    let local = shell.is_local_disk(&dir);
+                    let _ = tx.send(list_subfolders(fs.as_ref(), &dir, local));
+                }
             });
         if spawned.is_err() {
             return;

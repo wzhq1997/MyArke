@@ -971,7 +971,19 @@ impl Settings {
         self.net_places
             .retain(|p| !p.as_os_str().eq_ignore_ascii_case(share.as_os_str()));
         self.net_places.insert(0, share);
-        self.net_places.truncate(NET_PLACES_MAX);
+        // Bare servers anchor their shares in the sidebar tree; keep them even when many shares
+        // are visited, or those shares would turn back into flat rows.
+        let mut servers: Vec<PathBuf> = self
+            .net_places
+            .iter()
+            .filter(|p| arke_core::net::bare_server(p).is_some())
+            .cloned()
+            .collect();
+        self.net_places
+            .retain(|p| arke_core::net::bare_server(p).is_none());
+        self.net_places
+            .truncate(NET_PLACES_MAX.saturating_sub(servers.len()));
+        self.net_places.append(&mut servers);
     }
 
     pub(crate) fn forget_share(&mut self, share: &Path) {
@@ -2548,6 +2560,20 @@ mod tests {
         assert!(s.net_places.contains(&PathBuf::from(r"\\server9\share")));
         s.forget_share(Path::new(r"\\server9\share"));
         assert!(!s.net_places.contains(&PathBuf::from(r"\\server9\share")));
+    }
+
+    #[test]
+    fn a_remembered_server_survives_many_visited_shares() {
+        let mut s = Settings::default();
+        s.remember_share(Path::new(r"\\nas"));
+        for i in 0..20 {
+            s.remember_share(Path::new(&format!(r"\\nas\share{i}")));
+        }
+        assert!(
+            s.net_places.contains(&PathBuf::from(r"\\nas")),
+            "the server anchors its shares in the sidebar tree"
+        );
+        assert!(s.net_places.len() <= NET_PLACES_MAX);
     }
 
     #[test]
