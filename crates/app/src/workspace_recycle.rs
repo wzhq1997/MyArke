@@ -318,7 +318,11 @@ impl Workspace {
                         .mb(theme::paper_gap())
                         .rounded(theme::r_paper())
                         .bg(theme::paper())
-                        .shadow(theme::elev_2())
+                        .shadow(if horizontal {
+                            theme::elev_2_joined()
+                        } else {
+                            theme::elev_2()
+                        })
                         .overflow_hidden()
                         .child(page.view.clone()),
                 )
