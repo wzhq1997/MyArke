@@ -427,34 +427,42 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Option<AnyElement> {
         let page = self.home_page.as_ref().filter(|p| self.shows(&p.owner))?;
-        let top_bar = div()
-            .h(theme::h_bar())
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(theme::s_2())
-            .pr(theme::s_8())
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(theme::s_8())
-                    .px(theme::s_8())
-                    .child(
-                        svg()
-                            .path(Icon::KfHome.path())
-                            .size(theme::icon())
-                            .text_color(theme::text_muted()),
-                    )
-                    .child(
-                        div()
-                            .font_weight(theme::FW_STRONG)
-                            .child(t!("home.title").into_owned()),
-                    ),
-            )
-            .child(super::drag_area("home-drag", cx).flex_1().h_full())
-            .child(crate::explorer::caption_buttons(window));
+        let horizontal = Self::horizontal_tabs(cx);
+        // With tabs on top the strip takes the title's place and the rest of the row; only the
+        // window buttons stay on the right.
+        let top_bar: AnyElement = if horizontal {
+            Self::page_top_bar_compact(None, window)
+        } else {
+            div()
+                .h(theme::h_bar())
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(theme::s_2())
+                .pr(theme::s_8())
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(theme::s_8())
+                        .px(theme::s_8())
+                        .child(
+                            svg()
+                                .path(Icon::KfHome.path())
+                                .size(theme::icon())
+                                .text_color(theme::text_muted()),
+                        )
+                        .child(
+                            div()
+                                .font_weight(theme::FW_STRONG)
+                                .child(t!("home.title").into_owned()),
+                        ),
+                )
+                .child(super::drag_area("home-drag", cx).flex_1().h_full())
+                .child(crate::explorer::caption_buttons(window))
+                .into_any_element()
+        };
         Some(
             div()
                 .id("home-page")
@@ -463,8 +471,11 @@ impl Workspace {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(top_bar)
-                .children(self.tab_strip_under_bar(window, cx))
+                .child(if horizontal {
+                    self.merged_top_row(top_bar, window, cx)
+                } else {
+                    top_bar
+                })
                 .child(
                     div()
                         .relative()

@@ -2862,19 +2862,25 @@ impl Workspace {
     // --- Pane area ---
 
     /// The title row (search box, window buttons) over the tab's panes. The active pane draws it,
-    /// with its own search box; it spans both panes of a split, so splitting doesn't move it.
+    /// with its own search box; it spans both panes of a split, so splitting doesn't move it. With
+    /// tabs on top the strip shares that one row, so the panes lose no height to a second bar.
     fn render_panes(&self, window: &Window, cx: &mut Context<Self>) -> AnyElement {
         let view = self.active_view().clone();
-        let title = self.title_layout.clone();
-        let title_row = view.update(cx, |e, cx| e.render_title_row(&title, window, cx));
+        let horizontal = Self::horizontal_tabs(cx);
+        let top = if horizontal {
+            let right = view.update(cx, |e, cx| e.render_title_row_compact(window, cx));
+            self.merged_top_row(right, window, cx)
+        } else {
+            let title = self.title_layout.clone();
+            view.update(cx, |e, cx| e.render_title_row(&title, window, cx))
+        };
         div()
             .flex()
             .flex_col()
             .flex_1()
             .min_w_0()
             .h_full()
-            .child(title_row)
-            .children(self.tab_strip_under_bar(window, cx))
+            .child(top)
             .child(self.render_pane_area(window, cx))
             .into_any_element()
     }
@@ -3004,14 +3010,11 @@ impl Workspace {
             div()
                 .id("split-drop-zone")
                 .absolute()
-                .top(if Self::horizontal_tabs(cx) {
-                    theme::h_bar() + theme::h_bar()
-                } else {
-                    theme::h_bar()
-                })
-                .bottom(theme::paper_gap())
-                .right(theme::paper_gap())
-                .w((self.panes_width_hint() - theme::paper_gap()) / 2.)
+                // One top row in both layouts: below it, the panes start at `h_bar`.
+                .top(theme::h_bar())
+                .bottom(theme::s_8())
+                .right(theme::s_8())
+                .w((self.panes_width_hint() - theme::s_8()) / 2.)
                 .flex()
                 .items_center()
                 .justify_center()
@@ -3424,12 +3427,12 @@ impl Render for Workspace {
             .when(horizontal, |d| {
                 d.children(self.pin_drop_zone(cx).map(|zone| {
                     // An opaque card under the accent wash, since it covers the panes (and keeps
-                    // the drop from reaching what is under it). The strip is under the title row,
-                    // right of the sidebar.
+                    // the drop from reaching what is under it). The strip shares the single top
+                    // row, right of the sidebar.
                     div()
                         .occlude()
                         .absolute()
-                        .top(theme::h_bar() * 2. + theme::s_4())
+                        .top(theme::h_bar() + theme::s_4())
                         .left(theme::sidebar_width() + theme::s_8())
                         .w(theme::sidebar_full_width() - theme::s_16())
                         .rounded(theme::r_8())
@@ -3614,16 +3617,46 @@ impl Workspace {
             .child(div().pr(theme::s_8()).child(Self::sidebar_toggle(cx)))
     }
 
-    /// Horizontal tabs: tabs on the top row like a browser, caption buttons on the far right.
-    /// Tabs on top: the strip under the title row (of the panes, or of the page shown instead).
-    pub(super) fn tab_strip_under_bar(
+    /// Tabs on top share one row with the title bar: the strip fills everything from the left
+    /// edge of the panes up to `right`, which keeps its own buttons at the window's right edge.
+    /// This is called only when [`Self::horizontal_tabs`]; with tabs on the side the caller keeps
+    /// its own row unchanged.
+    pub(super) fn merged_top_row(
         &self,
+        right: AnyElement,
         window: &Window,
         cx: &mut Context<Self>,
-    ) -> Option<AnyElement> {
-        Self::horizontal_tabs(cx).then(|| self.render_tab_strip(window, cx).into_any_element())
+    ) -> AnyElement {
+        div()
+            .flex()
+            .flex_none()
+            .h(theme::h_bar())
+            .min_w_0()
+            .child(self.render_tab_strip(window, cx).into_any_element())
+            .child(right)
+            .into_any_element()
     }
 
+    /// The right end of a page's merged top row: its own actions (if any) and the window buttons.
+    /// The page's title icon and text are replaced by the tab strip in this layout.
+    pub(super) fn page_top_bar_compact(action: Option<AnyElement>, window: &Window) -> AnyElement {
+        let mut bar = div()
+            .id("page-top-bar")
+            .debug_selector(|| "page-top-bar".to_owned())
+            .flex_none()
+            .flex()
+            .items_center()
+            .gap(theme::s_2())
+            .pr(theme::s_8());
+        if let Some(action) = action {
+            bar = bar.child(action);
+        }
+        bar.child(crate::explorer::caption_buttons(window))
+            .into_any_element()
+    }
+
+    /// Horizontal tabs: the strip fills the top row like a browser, from the left edge of the
+    /// panes up to the title bar's buttons on the far right.
     fn render_tab_strip(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs: Vec<AnyElement> = (0..self.tabs.len())
             .map(|ix| {
@@ -3665,7 +3698,8 @@ impl Workspace {
             .h(theme::h_bar())
             .pl(theme::s_8())
             .pr(theme::s_8())
-            .flex_none()
+            .flex_1()
+            .min_w_0()
             .flex()
             .items_center()
             .gap(theme::s_4())

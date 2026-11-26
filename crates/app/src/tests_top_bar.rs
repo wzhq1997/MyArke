@@ -616,11 +616,11 @@ fn the_sort_button_sits_before_the_view_switcher(cx: &mut TestAppContext) {
     );
 }
 
-/// Tabs on top, as in VS Code: the title row (search, window buttons) stays on top, as with tabs
-/// in the sidebar; the tab strip goes under it, over the panes.
+/// Tabs on top share one row with the title bar: the strip fills the left, the search box rests
+/// as a magnifier on the right, and the panes keep the full height below that single bar.
 #[gpui::test]
-fn horizontal_tabs_go_under_the_title_row(cx: &mut TestAppContext) {
-    let (ws, _view, cx) = open_deep(cx, 1000.);
+fn horizontal_tabs_share_one_row_with_the_title_bar(cx: &mut TestAppContext) {
+    let (ws, view, cx) = open_deep(cx, 1000.);
     cx.update(|_, cx| {
         crate::settings::SettingsStore::global(cx).update(cx, |s, cx| {
             s.update(
@@ -630,19 +630,53 @@ fn horizontal_tabs_go_under_the_title_row(cx: &mut TestAppContext) {
         });
     });
     settle(cx);
-    let title = bounds(cx, "title-row");
     let strip = bounds(cx, "tab-strip");
+    let title = bounds(cx, "title-row");
     let search = bounds(cx, "filter-box");
-    assert_eq!(title.top(), px(0.), "the title row is on top");
-    assert!(strip.top() >= title.bottom() - px(0.5), "the tabs under it");
+    let caption = bounds(cx, "caption-lead");
+    assert_eq!(strip.top(), px(0.), "the strip is on top");
+    assert_eq!(title.top(), px(0.), "the title bar shares that row");
     assert!(
-        strip.left() >= title.left() - px(0.5),
-        "over the panes, not the sidebar"
+        title.left() >= strip.right() - px(0.5),
+        "the title bar is right of the strip"
     );
-    assert!(search.right() <= title.right());
+    assert!(near(strip.size.height, theme::h_bar(), 0.5));
+    assert!(near(title.size.height, theme::h_bar(), 0.5));
     assert!(
-        cx.debug_bounds("caption-lead").is_some(),
-        "the title row has the window buttons"
+        search.size.width <= theme::h_ctl() + px(1.),
+        "an unused search box is just its icon: {search:?}"
+    );
+    assert!(
+        search.right() <= caption.left() + px(0.5),
+        "{search:?} {caption:?}"
+    );
+    assert!(
+        cx.debug_bounds("sidebar-column").is_some(),
+        "the left nav buttons stay in the sidebar"
+    );
+
+    // Focus opens the box in place, still inside the row.
+    cx.dispatch_action(FocusFilter);
+    settle(cx);
+    let search = bounds(cx, "filter-box");
+    assert!(
+        search.size.width >= theme::scaled_px(120.) - px(1.),
+        "focusing opens the search box: {search:?}"
+    );
+    cx.simulate_input(LONG_QUERY);
+    settle(cx);
+    let search = bounds(cx, "filter-box");
+    assert!(
+        search.size.width <= theme::scaled_px(260.) + px(1.),
+        "long text stops before the buttons: {search:?}"
+    );
+    assert!(search.right() <= bounds(cx, "caption-lead").left() + px(0.5));
+    view.update_in(cx, Explorer::cancel_path_edit);
+    settle(cx);
+    // Still holding a query: it settles to its short summary, not the wide typing box.
+    assert!(
+        bounds(cx, "filter-box").size.width <= theme::scaled_px(120.) + px(1.),
+        "blur leaves a compact query summary"
     );
 
     // More tabs than fit: the strip scrolls, and the active tab is scrolled into view.
@@ -662,6 +696,60 @@ fn horizontal_tabs_go_under_the_title_row(cx: &mut TestAppContext) {
     assert!(
         tab.left() >= strip.left() - px(1.) && tab.right() <= strip.right() + px(1.),
         "the active (last) tab is in view: {tab:?} in {strip:?}"
+    );
+}
+
+#[gpui::test]
+fn horizontal_tabs_keep_the_search_and_buttons_in_a_narrow_window(cx: &mut TestAppContext) {
+    let (_ws, _view, cx) = open_deep(cx, 800.);
+    cx.update(|_, cx| {
+        crate::settings::SettingsStore::global(cx).update(cx, |s, cx| {
+            s.update(
+                |st| st.tab_layout = crate::settings::TabLayout::Horizontal,
+                cx,
+            );
+        });
+    });
+    settle(cx);
+    let strip = bounds(cx, "tab-strip");
+    let search = bounds(cx, "filter-box");
+    let caption = bounds(cx, "caption-lead");
+    assert!(
+        strip.size.width > px(120.),
+        "the strip keeps room for tabs: {strip:?}"
+    );
+    assert!(search.right() <= caption.left() + px(0.5), "{search:?} {caption:?}");
+    assert!(caption.right() + theme::h_ctl() * 3. <= px(800.));
+}
+
+/// The pages use the same single row: the strip takes the page title's place, and the window
+/// buttons stay at the right.
+#[gpui::test]
+fn horizontal_tabs_share_the_page_top_bar(cx: &mut TestAppContext) {
+    let (ws, _view, cx) = open_deep(cx, 1000.);
+    cx.update(|_, cx| {
+        crate::settings::SettingsStore::global(cx).update(cx, |s, cx| {
+            s.update(
+                |st| st.tab_layout = crate::settings::TabLayout::Horizontal,
+                cx,
+            );
+        });
+    });
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_home_for_test(false, window, cx);
+    });
+    settle(cx);
+    let strip = bounds(cx, "tab-strip");
+    let bar = bounds(cx, "page-top-bar");
+    assert_eq!(strip.top(), px(0.), "the strip is on top");
+    assert_eq!(bar.top(), px(0.), "the page bar shares that row");
+    assert!(
+        bar.left() >= strip.right() - px(0.5),
+        "the page bar is right of the strip"
+    );
+    assert!(
+        cx.debug_bounds("title-row").is_none(),
+        "a page has no search box"
     );
 }
 

@@ -1086,7 +1086,13 @@ impl Workspace {
             .filter(|p| self.shows(&p.owner))?;
         let s = SettingsStore::global(cx).read(cx).settings.clone();
         let search_box = search::search_box(&page.search, window, cx);
-        let top_bar = Self::render_settings_top_bar(search_box, window, cx);
+        let horizontal = Self::horizontal_tabs(cx);
+        // With tabs on top the strip takes the title's place and the rest of the row.
+        let top_bar: AnyElement = if horizontal {
+            Self::page_top_bar_compact(Some(search_box), window)
+        } else {
+            Self::render_settings_top_bar(search_box, window, cx).into_any_element()
+        };
         let compact = self.last_viewport_width < nav_compact_below();
         // While a query is typed every row notes itself as it is built, and the hits show in
         // place of the page.
@@ -1273,8 +1279,11 @@ impl Workspace {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(top_bar)
-                .children(self.tab_strip_under_bar(window, cx))
+                .child(if horizontal {
+                    self.merged_top_row(top_bar, window, cx)
+                } else {
+                    top_bar
+                })
                 .child(
                     // Same paper surface as the file list.
                     div()

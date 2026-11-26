@@ -236,44 +236,63 @@ impl Workspace {
             .as_ref()
             .filter(|p| self.shows(&p.owner))?;
         let pinned = SettingsStore::global(cx).read(cx).settings.recycle_pinned;
-        let top_bar = div()
-            .h(theme::h_bar())
-            .flex_none()
-            .flex()
-            .items_center()
-            .gap(theme::s_2())
-            .pr(theme::s_8())
-            .child(
-                div()
-                    .flex()
-                    .flex_none()
-                    .items_center()
-                    .gap(theme::s_8())
-                    .px(theme::s_8())
-                    .child(
-                        svg()
-                            .path(Icon::Trash.path())
-                            .size(theme::icon())
-                            .text_color(theme::text_muted()),
-                    )
-                    .child(
-                        div()
-                            .font_weight(theme::FW_STRONG)
-                            .child(t!("recycle.title").into_owned()),
-                    ),
+        let horizontal = Self::horizontal_tabs(cx);
+        // Unpinned from the sidebar: offer to pin it back. Kept on the right in both layouts.
+        let pin_action = (!pinned).then(|| {
+            crate::explorer::ghost_button(
+                "recycle-pin",
+                Icon::Pin,
+                true,
+                t!("sidebar.add_favorite"),
+                |_: &ClickEvent, _: &mut Window, cx: &mut App| Self::set_recycle_pinned(true, cx),
             )
-            .child(super::drag_area("recycle-drag", cx).flex_1().h_full())
-            // Unpinned from the sidebar: offer to pin it back.
-            .when(!pinned, |d| {
-                d.child(crate::explorer::ghost_button(
-                    "recycle-pin",
-                    Icon::Pin,
-                    true,
-                    t!("sidebar.add_favorite"),
-                    |_: &ClickEvent, _: &mut Window, cx: &mut App| Self::set_recycle_pinned(true, cx),
-                ))
-            })
-            .child(crate::explorer::caption_buttons(window));
+            .into_any_element()
+        });
+        // With tabs on top the strip takes the title's place and the rest of the row.
+        let top_bar: AnyElement = if horizontal {
+            Self::page_top_bar_compact(pin_action, window)
+        } else {
+            div()
+                .h(theme::h_bar())
+                .flex_none()
+                .flex()
+                .items_center()
+                .gap(theme::s_2())
+                .pr(theme::s_8())
+                .child(
+                    div()
+                        .flex()
+                        .flex_none()
+                        .items_center()
+                        .gap(theme::s_8())
+                        .px(theme::s_8())
+                        .child(
+                            svg()
+                                .path(Icon::Trash.path())
+                                .size(theme::icon())
+                                .text_color(theme::text_muted()),
+                        )
+                        .child(
+                            div()
+                                .font_weight(theme::FW_STRONG)
+                                .child(t!("recycle.title").into_owned()),
+                        ),
+                )
+                .child(super::drag_area("recycle-drag", cx).flex_1().h_full())
+                .when(!pinned, |d| {
+                    d.child(crate::explorer::ghost_button(
+                        "recycle-pin",
+                        Icon::Pin,
+                        true,
+                        t!("sidebar.add_favorite"),
+                        |_: &ClickEvent, _: &mut Window, cx: &mut App| {
+                            Self::set_recycle_pinned(true, cx);
+                        },
+                    ))
+                })
+                .child(crate::explorer::caption_buttons(window))
+                .into_any_element()
+        };
         Some(
             div()
                 .id("recycle-page")
@@ -282,8 +301,11 @@ impl Workspace {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(top_bar)
-                .children(self.tab_strip_under_bar(window, cx))
+                .child(if horizontal {
+                    self.merged_top_row(top_bar, window, cx)
+                } else {
+                    top_bar
+                })
                 .child(
                     // Same paper surface as the file list.
                     div()
