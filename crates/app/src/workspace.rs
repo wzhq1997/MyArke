@@ -3660,32 +3660,41 @@ impl Workspace {
     fn render_tab_strip(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs: Vec<AnyElement> = (0..self.tabs.len())
             .map(|ix| {
-                // Pinned tabs are narrow and don't shrink, like a browser's.
+                // Pinned tabs are narrow and don't shrink, like a browser's. The unpinned ones
+                // shrink only down to a readable title before the strip scrolls.
                 let pinned = self.tabs[ix].pinned;
                 div()
-                    .when(pinned, |d| d.w(crate::theme::scaled_px(132.)).flex_none())
+                    .h(theme::h_bar())
+                    .flex()
+                    .items_center()
+                    .when(pinned, |d| d.w(crate::theme::scaled_px(112.)).flex_none())
                     .when(!pinned, |d| {
-                        d.w(crate::theme::scaled_px(200.))
-                            .min_w(crate::theme::scaled_px(96.))
+                        d.w(crate::theme::scaled_px(180.))
+                            .min_w(crate::theme::scaled_px(104.))
                             .flex_shrink(1.)
                     })
                     .child(self.render_tab(ix, cx))
                     .into_any_element()
             })
             .collect();
-        // The active tab is scrolled into view each time it changes (opened, switched to with keys).
+        // The active tab is scrolled into view until it really is: widths change first (the strip
+        // narrows when the search box opens), so the bounds used for one scroll can be stale.
         let scroll = &self.sidebar_ui.strip_scroll;
-        // Again when the strip changes width (the window was made narrower, say).
-        let reveal = (self.active, scroll.bounds().size.width);
-        if self.sidebar_ui.strip_revealed.get() != Some(reveal) {
-            // Once the tabs were laid out (the first frame after opening has no places yet).
-            if scroll.bounds_for_item(self.active).is_some() {
-                self.sidebar_ui.strip_revealed.set(Some(reveal));
-                scroll.scroll_to_item(self.active);
-            } else if reveal.1 <= px(0.) {
-                // Not laid out yet: once more next frame (never in a loop).
-                cx.notify();
+        let viewport = scroll.bounds();
+        let offset = scroll.offset();
+        let visible = scroll.bounds_for_item(self.active).is_some_and(|item| {
+            let left = item.left() + offset.x;
+            let right = item.right() + offset.x;
+            if item.size.width > viewport.size.width {
+                // An oversized tab can only be aligned to the left edge.
+                left <= viewport.left() + px(1.)
+            } else {
+                left >= viewport.left() - px(1.) && right <= viewport.right() + px(1.)
             }
+        });
+        if !visible {
+            scroll.scroll_to_item(self.active);
+            cx.notify();
         }
         div()
             .id("tab-strip")
@@ -3696,13 +3705,13 @@ impl Workspace {
             // Dropping a tab between tabs or on the empty space to the right moves it to the end.
             .on_drop(cx.listener(Self::drop_tab_at_end))
             .h(theme::h_bar())
-            .pl(theme::s_8())
-            .pr(theme::s_8())
+            .pl(theme::s_6())
+            .pr(theme::s_6())
             .flex_1()
             .min_w_0()
             .flex()
             .items_center()
-            .gap(theme::s_4())
+            .gap(theme::s_2())
             // Too many tabs to fit: they scroll sideways (the wheel scrolls them too) instead of
             // the last ones being cut off.
             .child(
@@ -3711,7 +3720,7 @@ impl Workspace {
                     .debug_selector(|| "tab-strip-tabs".to_owned())
                     .flex()
                     .items_center()
-                    .gap(theme::s_4())
+                    .gap(theme::s_2())
                     .min_w_0()
                     .overflow_x_scroll()
                     .track_scroll(scroll)

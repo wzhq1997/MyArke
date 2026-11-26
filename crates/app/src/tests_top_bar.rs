@@ -655,27 +655,27 @@ fn horizontal_tabs_share_one_row_with_the_title_bar(cx: &mut TestAppContext) {
         "the left nav buttons stay in the sidebar"
     );
 
-    // Focus opens the box in place, still inside the row.
+    // Focus opens the box in place to a readable 180px, still inside the row.
     cx.dispatch_action(FocusFilter);
     settle(cx);
     let search = bounds(cx, "filter-box");
     assert!(
-        search.size.width >= theme::scaled_px(120.) - px(1.),
+        near(search.size.width, theme::scaled_px(180.), 1.),
         "focusing opens the search box: {search:?}"
     );
     cx.simulate_input(LONG_QUERY);
     settle(cx);
     let search = bounds(cx, "filter-box");
     assert!(
-        search.size.width <= theme::scaled_px(260.) + px(1.),
+        search.size.width <= theme::scaled_px(240.) + px(1.),
         "long text stops before the buttons: {search:?}"
     );
     assert!(search.right() <= bounds(cx, "caption-lead").left() + px(0.5));
     view.update_in(cx, Explorer::cancel_path_edit);
     settle(cx);
-    // Still holding a query: it settles to its short summary, not the wide typing box.
+    // Still holding a query: it settles to its compact summary, not the wide typing box.
     assert!(
-        bounds(cx, "filter-box").size.width <= theme::scaled_px(120.) + px(1.),
+        bounds(cx, "filter-box").size.width <= theme::scaled_px(180.) + px(1.),
         "blur leaves a compact query summary"
     );
 

@@ -385,12 +385,25 @@ pub(super) enum SearchBox {
 /// Width of the search box in `room` (the title row between its buttons). `rest`: its usual
 /// width. While typing it grows with `content` (what it needs to show the text, its icon, clear
 /// button and scope chip) into the rest of `room`. Zero `room` (not measured yet): the usual
-/// width.
+/// width. Uses the side-layout minimum; the merged top row passes its own with
+/// [`search_width_with_min`].
 pub(super) fn search_width(
     room: Pixels,
     state: SearchBox,
     rest: Pixels,
     content: Pixels,
+) -> Pixels {
+    search_width_with_min(room, state, rest, content, search_min())
+}
+
+/// [`search_width`] with an explicit minimum, for the merged top row where the field opens wider
+/// than it does beside the sidebar tabs.
+pub(super) fn search_width_with_min(
+    room: Pixels,
+    state: SearchBox,
+    rest: Pixels,
+    content: Pixels,
+    min: Pixels,
 ) -> Pixels {
     if room <= px(0.) {
         return rest;
@@ -399,12 +412,12 @@ pub(super) fn search_width(
         SearchBox::Typing => content.max(rest).min(room),
         SearchBox::Idle { .. } => rest.min(room),
     };
-    if fitted >= search_min() {
+    if fitted >= min {
         return fitted;
     }
     match state {
         // In use: keep the field as long as there's room for it.
-        SearchBox::Typing | SearchBox::Idle { text: true } => search_min().min(room),
+        SearchBox::Typing | SearchBox::Idle { text: true } => min.min(room),
         SearchBox::Idle { text: false } => theme::h_ctl(),
     }
 }
