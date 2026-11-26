@@ -1,12 +1,14 @@
 //! The title row above the panes, and the first row of each pane.
 //!
-//! Title row: with tabs on top, back, forward and refresh on the left (with tabs on the side they
-//! sit in the sidebar's header, which lines up with this row); the search box in the middle; the
-//! progress ring and the window buttons on the right. It belongs to the window, not to a pane:
-//! the active pane draws it with its own search box, so each pane keeps its own query, switching
-//! panes swaps the query shown, and splitting the tab doesn't move anything.
-//! - The search box rests at about [`SEARCH_SHARE`] of the row, centered on it. Long text grows it
-//!   sideways into the row's empty space, never over the buttons.
+//! Title row: with tabs on the side, back, forward and refresh sit in the sidebar's header, which
+//! lines up with this row; the search box is in the middle; the progress ring and the window
+//! buttons are on the right. It belongs to the window, not to a pane: the active pane draws it with
+//! its own search box, so each pane keeps its own query, switching panes swaps the query shown, and
+//! splitting the tab doesn't move anything. With tabs on top the strip shares this row, taking the
+//! space from its left edge up to the search box ([`Self::render_title_row_compact`]).
+//! - With tabs on the side the search box rests at about [`SEARCH_SHARE`] of the row, centered on
+//!   it. With tabs on top it rests as just a magnifier at the right end, growing up to
+//!   [`search_compact_max`] when used. Long text never grows over the buttons.
 //! - While it has focus, the pane it searches is outlined.
 //! - Every empty part of the row (between controls, above and below them) drags the window; a
 //!   double click there maximizes it.
@@ -40,6 +42,11 @@ fn search_rest_min() -> gpui::Pixels {
 }
 fn search_rest_max() -> gpui::Pixels {
     crate::theme::scaled_px(600.)
+}
+/// Longest the search box gets in the single top row used with tabs on top. It rests as just its
+/// magnifier and grows into this cap when focused or holding a query.
+fn search_compact_max() -> gpui::Pixels {
+    crate::theme::scaled_px(260.)
 }
 /// A path bar narrower than this shows only "… › current folder" (no trailing ›, little blank
 /// end), so the current folder's name keeps some room.
@@ -156,10 +163,33 @@ impl Explorer {
         let row = title.row.get().size.width;
         let rest = (row * SEARCH_SHARE).clamp(search_rest_min(), search_rest_max());
         let target = layout::search_width(title.middle.get().size.width, state, rest, content);
+        self.settle_search_width(state, target, window, row > px(0.))
+    }
+
+    /// The search box in the merged top row (tabs on top): a magnifier at rest, growing up to
+    /// [`search_compact_max`] when focused or holding a query.
+    fn search_box_width_compact(
+        &mut self,
+        state: SearchBox,
+        content: Pixels,
+        window: &Window,
+    ) -> Pixels {
+        let target = layout::search_width(search_compact_max(), state, theme::h_ctl(), content);
+        self.settle_search_width(state, target, window, true)
+    }
+
+    /// Eases toward `target` when the search box changes state, remembering what was drawn.
+    fn settle_search_width(
+        &mut self,
+        state: SearchBox,
+        target: Pixels,
+        window: &Window,
+        can_animate: bool,
+    ) -> Pixels {
         let now = Instant::now();
         if let Some((last, drawn)) = self.top_row.last
             && last != state
-            && row > px(0.)
+            && can_animate
             && crate::motion::enabled()
         {
             self.top_row.slide = Some((drawn - target, now));
@@ -217,8 +247,8 @@ impl Explorer {
         self.top_row.placeholder_for = Some(key);
     }
 
-    /// The window's title row, drawn by the active pane (see the module docs). With tabs on top
-    /// it is the same; the tab strip goes under it.
+    /// The window's title row, drawn by the active pane (see the module docs). Used when tabs are
+    /// on the side; with tabs on top [`Self::render_title_row_compact`] shares the row with the strip.
     pub(crate) fn render_title_row(
         &mut self,
         title: &TitleLayout,
@@ -278,6 +308,44 @@ impl Explorer {
                 bar = bar.child(Self::title_drag(("title-gap", i), cx).w(theme::s_2()));
             }
             bar = bar.child(control);
+        }
+        bar.child(
+            Self::title_drag("caption-lead", cx)
+                .debug_selector(|| "caption-lead".to_owned())
+                .w(theme::s_8()),
+        )
+        .child(super::view::caption_group(window))
+        .child(Self::title_drag("title-end", cx).w(theme::s_8()))
+        .into_any_element()
+    }
+
+    /// The right end of the single top row used when tabs are on top: the search box (a magnifier
+    /// until used) and the window buttons. The tab strip fills the space to its left, so the row
+    /// costs only one [`theme::h_bar`] of vertical space.
+    pub(crate) fn render_title_row_compact(
+        &mut self,
+        window: &Window,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let state = self.search_box_state(window, cx);
+        let content = self.search_content_width(window, cx);
+        let width = self.search_box_width_compact(state, content, window);
+        self.sync_search_placeholder(width, window, cx);
+        let caption_w = theme::h_ctl() * 3. + theme::s_2() * 2. + theme::s_8();
+        let mut bar = div()
+            .id("title-row")
+            .debug_selector(|| "title-row".to_owned())
+            .relative()
+            .flex()
+            .flex_none()
+            .items_center()
+            .h(theme::h_bar())
+            .children(Self::title_drag_bands(caption_w, cx))
+            .child(self.render_search(state, width, window, cx));
+        if let Some(op) = self.render_op_center(window, cx) {
+            bar = bar
+                .child(Self::title_drag("op-gap", cx).w(theme::s_2()))
+                .child(op);
         }
         bar.child(
             Self::title_drag("caption-lead", cx)

@@ -1009,7 +1009,13 @@ impl Workspace {
             .as_ref()
             .filter(|p| self.shows(&p.owner))?;
         let s = SettingsStore::global(cx).read(cx).settings.clone();
-        let top_bar = Self::render_settings_top_bar(window, cx);
+        let horizontal = Self::horizontal_tabs(cx);
+        // With tabs on top the strip takes the title's place and the rest of the row.
+        let top_bar: AnyElement = if horizontal {
+            Self::page_top_bar_compact(None, window)
+        } else {
+            Self::render_settings_top_bar(window, cx).into_any_element()
+        };
         let compact = self.last_viewport_width < nav_compact_below();
         let mut categories = Self::settings_sections(&s, page, window, cx);
         let selected = page.category.min(categories.len().saturating_sub(1));
@@ -1181,8 +1187,11 @@ impl Workspace {
                 .h_full()
                 .flex()
                 .flex_col()
-                .child(top_bar)
-                .children(self.tab_strip_under_bar(window, cx))
+                .child(if horizontal {
+                    self.merged_top_row(top_bar, window, cx)
+                } else {
+                    top_bar
+                })
                 .child(
                     // Same paper surface as the file list.
                     div()
