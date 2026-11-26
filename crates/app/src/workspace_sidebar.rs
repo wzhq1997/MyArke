@@ -128,6 +128,10 @@ pub(super) enum SidebarAction {
     /// A section's row in the menu of the sidebar's empty space, checked while it is shown
     /// (`true`): picked, it is hidden or shown again (#323).
     ShowSection(SidebarSection, bool),
+    /// Hide a user's profile folder or a cloud drive from This PC (its own row's menu).
+    HidePlace(PathBuf),
+    /// A hidden place in the menu of the sidebar's empty space: picked, it shows again.
+    ShowPlace(String),
     /// Copy or move the shelf's items into the active tab's folder.
     ShelfToHere {
         is_move: bool,
@@ -213,8 +217,8 @@ const fn menu_glyph(action: &SidebarAction) -> Option<Icon> {
         A::WindowClose => Icon::WinClose,
         A::OpenSettings => Icon::Settings,
         A::SetSidebarPeek(_) => Icon::Sidebar,
-        A::HideSection(_) => Icon::EyeOff,
-        A::ShowSection(_, true) => Icon::Check,
+        A::HideSection(_) | A::HidePlace(_) => Icon::EyeOff,
+        A::ShowSection(_, true) | A::ShowPlace(_) => Icon::Check,
         A::ShowSection(_, false) | A::CloseOtherTabs(_) | A::CloseAllTabs => return None,
     })
 }
@@ -293,7 +297,10 @@ const fn menu_group(action: &SidebarAction) -> u8 {
         A::ShelfClear | A::ShelfRemove(_) => 10,
         A::HistoryJump { .. } | A::TimelineStep { .. } => 11,
         A::SetSidebarPeek(_) => 12,
-        A::HideSection(_) | A::ShowSection(..) => 13,
+        A::HideSection(_)
+        | A::ShowSection(..)
+        | A::HidePlace(_)
+        | A::ShowPlace(_) => 13,
     }
 }
 
@@ -755,6 +762,20 @@ fn this_pc_count(places: &[Place], mapped: bool) -> usize {
     places.iter().filter(|p| in_this_pc(p.kind, mapped)).count()
 }
 
+/// Places the user hid from the sidebar. Filtering here, as the tree is drawn, rather than in the
+/// places cache: other windows share it and a later full load replaces it.
+fn visible_places(places: &[Place], cx: &App) -> Vec<Place> {
+    let Some(store) = SettingsStore::try_global(cx) else {
+        return places.to_vec();
+    };
+    let settings = &store.read(cx).settings;
+    places
+        .iter()
+        .filter(|p| !settings.is_place_hidden(&p.path))
+        .cloned()
+        .collect()
+}
+
 /// The folders the tree opens to show `here` (#241): from the This PC root that holds it (the
 /// innermost one, so the user folder wins over its drive) down to its parent. Empty when `here`
 /// is a root itself or isn't under This PC.
@@ -866,6 +887,9 @@ pub(super) fn favorite_tiles(places: &[Place], cx: &mut App) -> Vec<(PathBuf, St
     settings
         .tiles(places)
         .into_iter()
+        // A place hidden from This PC is hidden everywhere in the sidebar (and on Home), even
+        // when it is one of the favorites (cloud drives are favorites by default).
+        .filter(|path| !settings.is_place_hidden(path))
         .map(|path| {
             // A name the user gave the favorite (#259) comes first.
             let label = settings
@@ -1438,7 +1462,12 @@ impl Workspace {
     )]
     fn render_pins(&self, current: Option<&Path>, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let settings = &SettingsStore::global(cx).read(cx).settings;
-        let pinned = settings.pinned.clone();
+        let pinned: Vec<PathBuf> = settings
+            .pinned
+            .iter()
+            .filter(|p| !settings.is_place_hidden(p))
+            .cloned()
+            .collect();
         let recycle_pinned = settings.recycle_pinned;
         let own_names = settings.favorite_names.clone();
         let collapsed = settings.is_collapsed(SidebarSection::Favorites);
@@ -1782,6 +1811,7 @@ impl Workspace {
         let favorite = matches!(at, MenuFor::Favorite | MenuFor::HomeFavorite);
         // The place itself (a drive, a network place, a favorite), not a folder in its tree.
         let top = !matches!(at, MenuFor::Tree { depth } if depth > 0);
+        let kind = places.iter().find(|p| p.path == path).map(|p| p.kind);
         let mut items = vec![row(
             t!("sidebar.open_in_new_tab"),
             SidebarAction::OpenInNewTab(place.clone()),
@@ -1829,7 +1859,6 @@ impl Workspace {
 
         // A drive's or network place's own rows.
         if top {
-            let kind = places.iter().find(|p| p.path == path).map(|p| p.kind);
             let mapped = matches!(kind, Some(PlaceKind::Drive { remote: true, .. }));
             let drive = matches!(kind, Some(PlaceKind::Drive { remote: false, .. }));
             let net_place = settings.net_places.iter().any(|p| p == path);
@@ -1913,6 +1942,19 @@ impl Workspace {
             items.push(row(
                 t!("menu.properties"),
                 SidebarAction::Properties(place, true),
+            ));
+        }
+        // The user's profile folder and cloud drives can be kept out of This PC's tree. Only the
+        // place's own row offers this: a child folder's row is not a place to hide on its own.
+        if matches!(at, MenuFor::Tree { depth: 0 })
+            && matches!(
+                kind,
+                Some(PlaceKind::Folder(KnownFolder::Profile) | PlaceKind::Cloud)
+            )
+        {
+            items.push(row(
+                t!("sidebar.hide_place"),
+                SidebarAction::HidePlace(path.to_path_buf()),
             ));
         }
         items
@@ -2291,7 +2333,7 @@ impl Workspace {
             self.reveal_sidebar_row(row);
         }
         let current = self.sidebar_here(cx);
-        let places = self.active_view().read(cx).places.clone();
+        let places = visible_places(&self.active_view().read(cx).places, cx);
         let (this_pc_collapsed, this_pc_hidden, network_collapsed, network_hidden) = {
             let settings = &SettingsStore::global(cx).read(cx).settings;
             (
@@ -2405,7 +2447,8 @@ impl Workspace {
             .on_mouse_down(
                 MouseButton::Right,
                 cx.listener(|this, e: &MouseDownEvent, _, cx| {
-                    let items = Self::sidebar_space_menu(cx);
+                    let places = this.active_view().read(cx).places.clone();
+                    let items = Self::sidebar_space_menu(&places, cx);
                     this.open_sidebar_menu(e.position, items, cx);
                 }),
             )
@@ -3255,7 +3298,7 @@ impl Workspace {
             // A page covers the folder: the tree stays as it is.
             return;
         };
-        let places = self.active_view().read(cx).places.clone();
+        let places = visible_places(&self.active_view().read(cx).places, cx);
         // Followed again when This PC's places change too: they load after the first frame.
         let settings = &SettingsStore::global(cx).read(cx).settings;
         let mapped = settings.is_hidden(SidebarSection::Network);
@@ -3477,8 +3520,8 @@ impl Workspace {
 
     /// The menu of the sidebar's empty space (#323): the sections that can be hidden, checked
     /// while shown, then the Recycle Bin once it was removed from the favorites, which had no
-    /// way back there but its page's pin button (#308).
-    fn sidebar_space_menu(cx: &App) -> Vec<SidebarRow> {
+    /// way back there but its page's pin button (#308), and any place hidden from This PC.
+    fn sidebar_space_menu(places: &[Place], cx: &App) -> Vec<SidebarRow> {
         let mut items: Vec<SidebarRow> = HIDEABLE
             .into_iter()
             .map(|section| {
@@ -3493,6 +3536,22 @@ impl Workspace {
                 t!("sidebar.add_recycle"),
                 SidebarAction::SetRecyclePinned(true),
             ));
+        }
+        if let Some(store) = SettingsStore::try_global(cx) {
+            let settings = store.read(cx);
+            for key in &settings.settings.hidden_places {
+                // The place may no longer load (a cloud drive signed out): fall back to its path's
+                // last component, which is what its row showed.
+                let name = places
+                    .iter()
+                    .find(|p| crate::place_names::key(&p.path) == *key)
+                    .map(|p| p.label.clone())
+                    .unwrap_or_else(|| display_name(Path::new(key)));
+                items.push(row(
+                    t!("sidebar.show_hidden_place", name = name),
+                    SidebarAction::ShowPlace(key.clone()),
+                ));
+            }
         }
         items
     }
@@ -3803,6 +3862,22 @@ impl Workspace {
             SidebarAction::SetSidebarPeek(on) => Self::set_sidebar_peek(on, cx),
             SidebarAction::HideSection(section) => Self::show_section(section, false, cx),
             SidebarAction::ShowSection(section, shown) => Self::show_section(section, !shown, cx),
+            SidebarAction::HidePlace(path) => {
+                self.sidebar_ui.tree_auto.remove(&path);
+                self.expanded.remove(&path);
+                SettingsStore::global(cx).update(cx, |s, cx| {
+                    s.update(|st| {
+                        st.set_place_hidden(&path, true);
+                    }, cx);
+                });
+            }
+            SidebarAction::ShowPlace(key) => {
+                SettingsStore::global(cx).update(cx, |s, cx| {
+                    s.update(|st| {
+                        st.show_place_key(&key);
+                    }, cx);
+                });
+            }
             SidebarAction::OpenFile(path) => {
                 crate::search_history::SearchHistory::record(&path, false, cx);
                 let shell = Arc::clone(&self.services.shell);

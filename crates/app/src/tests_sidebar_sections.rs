@@ -520,3 +520,74 @@ fn network_hides_and_comes_back(cx: &mut TestAppContext) {
     assert!(current(cx).hidden_sections.is_empty());
     assert!(drawn(cx, "network-header"), "back");
 }
+
+/// A user's profile folder and a cloud drive hide from their own rows' menus and come back from
+/// the sidebar's empty-space menu. The choice is kept in the settings, not in the shared places
+/// cache (which a later full load replaces).
+#[gpui::test]
+fn places_hide_from_their_rows_and_come_back(cx: &mut TestAppContext) {
+    let fs = FakeFs::new();
+    fs.insert_dir(r"C:\w", vec![dir("a")]);
+    fs.insert_dir(p("a"), Vec::new());
+    fs.insert_dir(r"C:\Users\wzhq", Vec::new());
+    fs.insert_dir(r"C:\wps", Vec::new());
+    let shell = Arc::new(FakeShell::default());
+    shell.extra_places.lock().extend([
+        Place {
+            label: "wzhq".into(),
+            path: PathBuf::from(r"C:\Users\wzhq"),
+            kind: PlaceKind::Folder(KnownFolder::Profile),
+        },
+        Place {
+            label: "WPS Cloud".into(),
+            path: PathBuf::from(r"C:\wps"),
+            kind: PlaceKind::Cloud,
+        },
+    ]);
+    let (ws, cx) = setup_workspace_with(cx, fs, shell, r"C:\w");
+    let view = ws.update(cx, |ws, _| ws.active_view().clone());
+    wait_until(cx, &view, "load", |v| {
+        loaded(r"C:\w")(v) && v.places.len() > 2
+    });
+    cx.simulate_resize(gpui::size(px(1200.), px(900.)));
+    refresh(cx);
+    let hide = t!("sidebar.hide_place").into_owned();
+    let profile = PathBuf::from(r"C:\Users\wzhq");
+    let cloud = PathBuf::from(r"C:\wps");
+
+    let at = bounds(cx, "sidebar wzhq").center();
+    right_click(cx, at);
+    let labels = menu(&ws, cx).expect("a menu");
+    assert!(labels.contains(&hide), "{labels:?}");
+    pick(&ws, cx, &hide);
+    assert_eq!(
+        current(cx).hidden_places,
+        vec![crate::place_names::key(&profile)]
+    );
+    assert!(!drawn(cx, "sidebar wzhq"), "the profile row is gone");
+    assert!(drawn(cx, "sidebar WPS Cloud"), "the cloud stays");
+
+    let at = bounds(cx, "sidebar WPS Cloud").center();
+    right_click(cx, at);
+    pick(&ws, cx, &hide);
+    assert!(!drawn(cx, "sidebar WPS Cloud"));
+    assert_eq!(current(cx).hidden_places.len(), 2);
+
+    let show_wzhq = t!("sidebar.show_hidden_place", name = "wzhq").into_owned();
+    let show_cloud = t!("sidebar.show_hidden_place", name = "WPS Cloud").into_owned();
+    let at = bounds(cx, "tab-list-end").center();
+    right_click(cx, at);
+    let labels = menu(&ws, cx).expect("a menu");
+    assert!(labels.contains(&show_wzhq) && labels.contains(&show_cloud), "{labels:?}");
+    pick(&ws, cx, &show_wzhq);
+    assert!(drawn(cx, "sidebar wzhq"), "back");
+    assert_eq!(
+        current(cx).hidden_places,
+        vec![crate::place_names::key(&cloud)]
+    );
+    let at = bounds(cx, "tab-list-end").center();
+    right_click(cx, at);
+    pick(&ws, cx, &show_cloud);
+    assert!(drawn(cx, "sidebar WPS Cloud"), "back");
+    assert!(current(cx).hidden_places.is_empty());
+}
