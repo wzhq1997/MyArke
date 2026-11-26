@@ -3567,19 +3567,14 @@ impl Workspace {
     fn render_tab_strip(&self, _window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tabs: Vec<AnyElement> = (0..self.tabs.len())
             .map(|ix| {
-                // Pinned tabs are narrow and don't shrink, like a browser's. The unpinned ones
-                // shrink only down to a readable title before the strip scrolls.
-                let pinned = self.tabs[ix].pinned;
+                // Every tab in the top strip has the same fixed width, so one long title never
+                // takes space from its neighbours; overflowing titles truncate instead.
                 div()
                     .h(theme::h_bar())
                     .flex()
                     .items_center()
-                    .when(pinned, |d| d.w(crate::theme::scaled_px(112.)).flex_none())
-                    .when(!pinned, |d| {
-                        d.w(crate::theme::scaled_px(180.))
-                            .min_w(crate::theme::scaled_px(104.))
-                            .flex_shrink(1.)
-                    })
+                    .w(crate::theme::scaled_px(160.))
+                    .flex_none()
                     .child(self.render_tab(ix, cx))
                     .into_any_element()
             })

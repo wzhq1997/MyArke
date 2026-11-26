@@ -5028,9 +5028,9 @@ fn here_layer() -> AnyElement {
         .into_any_element()
 }
 
-/// Active tab in the merged top row: the paper surface joins the pane below, with a light accent
-/// line so the selected tab reads at a glance without a heavy fill. The bottom border is covered
-/// between the rounded corners, leaving the tab connected to the content.
+/// Active tab in the merged top row: the paper surface has square bottom corners and no bottom
+/// border, so it runs straight into the content below. A light accent line keeps the selection
+/// readable without a heavy fill.
 fn horizontal_tab_surface() -> AnyElement {
     div()
         .absolute()
@@ -5039,7 +5039,8 @@ fn horizontal_tab_surface() -> AnyElement {
             div()
                 .absolute()
                 .inset_0()
-                .rounded(theme::r_8())
+                .rounded_t(theme::r_8())
+                .rounded_b_none()
                 .bg(theme::paper())
                 .border_1()
                 .border_color(theme::line()),
@@ -5058,8 +5059,8 @@ fn horizontal_tab_surface() -> AnyElement {
             div()
                 .absolute()
                 .bottom_0()
-                .left(theme::r_8())
-                .right(theme::r_8())
+                .left(px(1.))
+                .right(px(1.))
                 .h(px(2.))
                 .bg(theme::paper()),
         )
