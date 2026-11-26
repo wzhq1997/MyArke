@@ -402,3 +402,54 @@ fn the_tiles_stay_in_view_while_the_tree_follows(cx: &mut TestAppContext) {
         );
     }
 }
+
+/// A configured server expands into its shares under its own row; visiting a share does not add a
+/// second, flat row below it.
+#[gpui::test]
+fn a_server_expands_into_its_shares(cx: &mut TestAppContext) {
+    use arke_core::net::{STYPE_DISKTREE, Share};
+    let shell = Arc::new(FakeShell::default());
+    *shell.net_probe.lock() = Some(Arc::new(SharesProbe(vec![
+        Share {
+            name: "public".into(),
+            kind: STYPE_DISKTREE,
+        },
+        Share {
+            name: "team".into(),
+            kind: STYPE_DISKTREE,
+        },
+        Share {
+            name: "C$".into(),
+            kind: STYPE_DISKTREE,
+        },
+    ])));
+    let (ws, cx) = setup_workspace_with(cx, fs(), shell, r"C:\work");
+    cx.simulate_resize(gpui::size(gpui::px(1200.), gpui::px(900.)));
+    change(cx, |st| {
+        // Keep This PC from expanding so the Network rows are in view.
+        st.sidebar_follow = false;
+        st.net_places = vec![PathBuf::from(r"\\nas"), PathBuf::from(r"\\nas\team")];
+    });
+    refresh(cx);
+    assert!(shows(cx, r"\\nas"), "the server is a root row");
+    assert!(
+        !shows(cx, &t!("sidebar.share_label", share = "team", server = "nas")),
+        "the visited share is not drawn as a second root"
+    );
+
+    ws.update(cx, |ws, cx| {
+        ws.toggle_expand_for_test(PathBuf::from(r"\\nas"), cx);
+    });
+    settle(cx, "the shares are listed", |cx| {
+        ws.update(cx, |ws, _| {
+            ws.tree_children_for_test(Path::new(r"\\nas"))
+                == Some(vec![
+                    PathBuf::from(r"\\nas\public"),
+                    PathBuf::from(r"\\nas\team"),
+                ])
+        })
+    });
+    settle(cx, "the child rows are drawn", |cx| shows(cx, "public"));
+    assert!(expanded(&ws, cx, r"\\nas"), "the server is expanded");
+    assert!(shows(cx, "team"), "an already visited share is a child row");
+}
