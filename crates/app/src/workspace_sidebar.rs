@@ -4591,7 +4591,6 @@ impl Workspace {
         let tab: &Tab = &self.tabs[ix];
         let active = ix == self.active;
         let split = tab.is_split();
-        let horizontal = Self::horizontal_tabs(cx);
         let group = SharedString::from(format!("tab-{ix}"));
         // Tabs showing Home, Settings or the Recycle Bin use that page's name.
         let titles: Vec<SharedString> = tab
@@ -4607,10 +4606,7 @@ impl Workspace {
             .id(("tab", ix))
             .debug_selector(|| format!("tab-{ix}"))
             .group(group.clone())
-            .h(if horizontal && active {
-                // On top the active tab fills the row and joins the paper below.
-                theme::h_bar()
-            } else if split {
+            .h(if split {
                 theme::h_row() + theme::s_8()
             } else if tab.pinned {
                 // Pinned tabs are a tighter group at the top.
@@ -4620,38 +4616,17 @@ impl Workspace {
             })
             .when(tab.pinned, |d| d.text_size(theme::fs_13()))
             .flex()
-            // In the top strip the slot sets the width, so the row shrinks with it and the title
-            // truncates instead of spilling past the scrollable area.
-            .when(horizontal, |d| d.flex_1().min_w_0())
-            .when(!horizontal, |d| d.flex_none())
+            .flex_none()
             .items_center()
             .gap(theme::s_4())
-            .pl(if horizontal {
-                if split {
-                    theme::s_4()
-                } else {
-                    theme::s_6()
-                }
-            } else if split {
-                theme::s_4()
-            } else {
-                theme::s_8()
-            })
+            .pl(if split { theme::s_4() } else { theme::s_8() })
             .pr(theme::s_6())
             .rounded(theme::r_8())
             .cursor_pointer()
             // Slides from the old position after a reorder (the offset is relative).
             .relative()
-            // The active tab shares the paper surface with the list. On top it joins that surface
-            // at the bottom and gets a light accent line, like a browser tab.
-            .when(active, |d| {
-                let surface = if horizontal {
-                    horizontal_tab_surface()
-                } else {
-                    here_layer()
-                };
-                d.child(surface).text_color(theme::text())
-            })
+            // The active tab shares the paper surface with the list.
+            .when(active, |d| d.child(here_layer()).text_color(theme::text()))
             // Asked for again in the background (middle click): fades out from the accent color.
             .when_some(self.tab_flash(ix), |d, serial| {
                 d.child(
@@ -4738,15 +4713,11 @@ impl Workspace {
                     .path(icon.path())
                     .size(theme::icon())
                     .flex_none()
-                    .text_color(if horizontal && active {
-                        theme::text()
-                    } else {
-                        theme::text_muted()
-                    })
+                    .text_color(theme::text_muted())
                     .into_any_element(),
                 None => kind_icon(FileKind::Folder, theme::icon()),
             };
-            row.gap(if horizontal { theme::s_6() } else { theme::s_8() })
+            row.gap(theme::s_8())
                 .child(icon)
                 .child(div().flex_1().min_w_0().truncate().child(title))
         };
@@ -5025,45 +4996,6 @@ fn here_layer() -> AnyElement {
         // edge of the scrolling sidebar (#220).
         .border_1()
         .border_color(theme::line())
-        .into_any_element()
-}
-
-/// Active tab in the merged top row: the paper surface has square bottom corners and no bottom
-/// border, so it runs straight into the content below. A light accent line keeps the selection
-/// readable without a heavy fill.
-fn horizontal_tab_surface() -> AnyElement {
-    div()
-        .absolute()
-        .inset_0()
-        .child(
-            div()
-                .absolute()
-                .inset_0()
-                .rounded_t(theme::r_8())
-                .rounded_b_none()
-                .bg(theme::paper())
-                .border_1()
-                .border_color(theme::line()),
-        )
-        .child(
-            div()
-                .absolute()
-                .top_0()
-                .left(theme::s_8())
-                .right(theme::s_8())
-                .h(px(2.))
-                .rounded(theme::r_4())
-                .bg(theme::signal_line()),
-        )
-        .child(
-            div()
-                .absolute()
-                .bottom_0()
-                .left(px(1.))
-                .right(px(1.))
-                .h(px(2.))
-                .bg(theme::paper()),
-        )
         .into_any_element()
 }
 
