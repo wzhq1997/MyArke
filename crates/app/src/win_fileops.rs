@@ -1236,8 +1236,9 @@ fn run(
                 }
             }
             FileOp::DissolveFolder { folder } => {
-                // The contents and the now-empty folder go through one batch: the engine performs
-                // them in the order they were queued, and reports all of them for one undo step.
+                // No confirmation: dissolving is deliberate and reversible. Move the children
+                // first, then recycle the folder only once it is really empty, so a failed move
+                // never takes its leftovers with it. Both batches use the same sink and undo step.
                 let dest = folder.parent().ok_or_else(|| {
                     ShellError::Io(std::io::Error::new(
                         std::io::ErrorKind::InvalidInput,
@@ -1245,23 +1246,38 @@ fn run(
                     ))
                 })?;
                 let dest_item = shell_item(dest)?;
-                flags |= FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE;
-                let mut queued = 0usize;
-                for entry in std::fs::read_dir(arke_core::path::verbatim(folder))? {
-                    let path = arke_core::path::unverbatim(&entry?.path());
-                    fo.MoveItem(&shell_item(&path)?, &dest_item, PCWSTR::null(), None)?;
-                    queued += 1;
-                }
-                let w = wide(folder.as_os_str());
-                match SHCreateItemFromParsingName::<_, _, IShellItem>(PCWSTR(w.as_ptr()), None) {
-                    Ok(item) => {
-                        fo.DeleteItem(&item, None)?;
-                        queued += 1;
+                let children: Vec<PathBuf> = std::fs::read_dir(arke_core::path::verbatim(folder))?
+                    .map(|entry| entry.map(|e| arke_core::path::unverbatim(&e.path())))
+                    .collect::<std::io::Result<_>>()?;
+                if children.is_empty() {
+                    flags |= FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOF_NOCONFIRMATION;
+                    fo.DeleteItem(&shell_item(folder)?, None)?;
+                } else {
+                    flags |= FOF_ALLOWUNDO | FOF_RENAMEONCOLLISION | FOF_NOCONFIRMATION;
+                    for path in &children {
+                        fo.MoveItem(&shell_item(path)?, &dest_item, PCWSTR::null(), None)?;
                     }
-                    Err(error) => skipped.extend(unqueued(folder, &error)),
-                }
-                if queued == 0 {
-                    return Ok(OpOutcome::Done);
+                    let moved = advise_finish(&fo, flags, owner, silent, sink)?;
+                    if !matches!(moved, OpOutcome::Done) {
+                        return Ok(moved);
+                    }
+                    if std::fs::read_dir(arke_core::path::verbatim(folder))?
+                        .next()
+                        .is_some()
+                    {
+                        // A child stayed put: keep the folder and whatever it still holds.
+                        return Ok(OpOutcome::Done);
+                    }
+                    let recycle: IFileOperation =
+                        CoCreateInstance(&FileOperation, None, CLSCTX_ALL)?;
+                    let mut recycle_flags = if silent {
+                        FOF_NO_UI
+                    } else {
+                        FILEOPERATION_FLAGS(0)
+                    };
+                    recycle_flags |= FOF_ALLOWUNDO | FOFX_RECYCLEONDELETE | FOF_NOCONFIRMATION;
+                    recycle.DeleteItem(&shell_item(folder)?, None)?;
+                    return advise_finish(&recycle, recycle_flags, owner, silent, sink);
                 }
             }
             FileOp::Rename { path, new_name } => {
@@ -1295,8 +1311,25 @@ fn run(
                 )?;
             }
         }
+        advise_finish(&fo, flags, owner, silent, sink)
+    }
+}
+
+/// Advances one `IFileOperation` with the shared recorder (if any), performs it, then detaches the
+/// recorder so the same sink can be advised to a follow-up batch.
+///
+/// # Safety
+/// COM must be initialized on this thread and `fo` created on it.
+unsafe fn advise_finish(
+    fo: &IFileOperation,
+    flags: FILEOPERATION_FLAGS,
+    owner: Option<isize>,
+    silent: bool,
+    sink: Option<&IFileOperationProgressSink>,
+) -> Result<OpOutcome, ShellError> {
+    unsafe {
         let cookie = sink.and_then(|sink| fo.Advise(sink).ok());
-        let result = finish(&fo, flags, owner, silent);
+        let result = finish(fo, flags, owner, silent);
         if let Some(cookie) = cookie {
             let _ = fo.Unadvise(cookie);
         }

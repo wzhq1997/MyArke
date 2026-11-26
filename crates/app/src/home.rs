@@ -1613,7 +1613,8 @@ impl Render for HomePage {
             );
             drives.push(card.into_any_element());
         }
-        // Network: mapped drives and recently opened shares
+        // Network: mapped drives and remembered places. A share under a remembered server is
+        // that server's child on the left, so it isn't repeated as another card here.
         let mut net: Vec<(String, PathBuf)> = self
             .places
             .iter()
@@ -1625,7 +1626,8 @@ impl Render for HomePage {
                 )
             })
             .collect();
-        for share in &self.shares {
+        for share in crate::place_names::net_roots(&self.shares) {
+            let share = &share;
             if !net.iter().any(|(_, p)| p == share) {
                 let label = crate::place_names::shown_name(&self.names, share)
                     .unwrap_or_else(|| share.display().to_string());

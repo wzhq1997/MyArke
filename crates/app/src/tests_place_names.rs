@@ -313,6 +313,27 @@ fn a_mapped_drive_is_renamed_on_home(cx: &mut TestAppContext) {
     assert!(cx.debug_bounds("place-rename-box").is_none());
 }
 
+/// A server added on the left shows as one Home card; opening its shares must not add more.
+#[gpui::test]
+fn a_remembered_server_hides_its_share_on_home(cx: &mut TestAppContext) {
+    let (ws, cx) = window(cx);
+    change(cx, |st| {
+        st.net_places = vec![PathBuf::from(r"\\nas"), PathBuf::from(SHARE)];
+    });
+    ws.update_in(cx, |ws, window, cx| {
+        ws.open_home_for_test(false, window, cx);
+    });
+    refresh(cx);
+    assert!(
+        cx.debug_bounds(r"home-card \\nas").is_some(),
+        "the added server is on Home"
+    );
+    assert!(
+        cx.debug_bounds(r"home-card \\nas\docs").is_none(),
+        "the visited share is the server's child, not a second card"
+    );
+}
+
 /// The collapsed sidebar names the drive too.
 #[gpui::test]
 fn the_collapsed_sidebar_uses_the_name(cx: &mut TestAppContext) {
