@@ -533,7 +533,10 @@ fn horizontal_tabs_keep_the_search_and_buttons_in_a_narrow_window(cx: &mut TestA
         strip.size.width > px(120.),
         "the strip keeps room for tabs: {strip:?}"
     );
-    assert!(search.right() <= caption.left() + px(0.5), "{search:?} {caption:?}");
+    assert!(
+        search.right() <= caption.left() + px(0.5),
+        "{search:?} {caption:?}"
+    );
     assert!(caption.right() + theme::h_ctl() * 3. <= px(800.));
 }
 
@@ -574,6 +577,84 @@ fn hover_for_tooltip(cx: &mut VisualTestContext, at: Point<Pixels>) {
     cx.executor()
         .advance_clock(std::time::Duration::from_millis(800));
     settle(cx);
+}
+
+/// Opens a folder whose last component may be long enough to clip in a tab.
+fn open_named<'a>(cx: &'a mut TestAppContext, path: &str, width: f32) -> &'a mut VisualTestContext {
+    let fs = FakeFs::new();
+    fs.insert_many(path, 2);
+    let (ws, cx) = setup_workspace_with(cx, fs, Arc::new(FakeShell::default()), path);
+    let view = ws.update(cx, |ws, _| ws.active_view().clone());
+    wait_until(cx, &view, "load", loaded(path));
+    cx.simulate_resize(size(px(width), px(650.)));
+    settle(cx);
+    cx
+}
+
+#[gpui::test]
+fn tab_title_tooltip_only_when_the_text_is_clipped(cx: &mut TestAppContext) {
+    let long = r"C:\t\this-is-a-very-long-folder-name-that-will-not-fit-in-a-narrow-tab";
+    let cx = open_named(cx, long, 480.);
+    let title = bounds(cx, "tab-title-0");
+    hover_for_tooltip(cx, point(title.left() + px(6.), title.center().y));
+    assert!(
+        cx.debug_bounds("tooltip-card").is_some(),
+        "sidebar tab with a clipped title"
+    );
+    cx.simulate_mouse_move(point(px(600.), px(500.)), None, Modifiers::none());
+    settle(cx);
+}
+
+#[gpui::test]
+fn horizontal_tab_title_tooltip_when_clipped(cx: &mut TestAppContext) {
+    let long = r"C:\t\this-is-a-very-long-folder-name-that-will-not-fit-in-a-narrow-tab";
+    let cx = open_named(cx, long, 800.);
+    cx.update(|_, cx| {
+        crate::settings::SettingsStore::global(cx).update(cx, |s, cx| {
+            s.update(
+                |st| st.tab_layout = crate::settings::TabLayout::Horizontal,
+                cx,
+            );
+        });
+    });
+    settle(cx);
+    let title = bounds(cx, "tab-title-0");
+    hover_for_tooltip(cx, point(title.left() + px(6.), title.center().y));
+    assert!(
+        cx.debug_bounds("tooltip-card").is_some(),
+        "horizontal tab with a clipped title: {title:?}"
+    );
+}
+
+#[gpui::test]
+fn split_tab_title_tooltip_when_clipped(cx: &mut TestAppContext) {
+    let long = r"C:\t\this-is-a-very-long-folder-name-that-will-not-fit-in-a-narrow-tab";
+    let fs = FakeFs::new();
+    fs.insert_many(long, 2);
+    fs.insert_many(OTHER, 2);
+    let (ws, cx) = setup_workspace_with(cx, fs, Arc::new(FakeShell::default()), long);
+    let left = ws.update(cx, |ws, _| ws.active_view().clone());
+    wait_until(cx, &left, "load", loaded(long));
+    split(&ws, &left, cx);
+    cx.simulate_resize(size(px(900.), px(650.)));
+    settle(cx);
+    let title = bounds(cx, "tab-title-0");
+    hover_for_tooltip(cx, point(title.left() + px(6.), title.center().y));
+    assert!(
+        cx.debug_bounds("tooltip-card").is_some(),
+        "clipped half of a split tab: {title:?}"
+    );
+}
+
+#[gpui::test]
+fn short_tab_title_has_no_tooltip(cx: &mut TestAppContext) {
+    let cx = open_named(cx, OTHER, 1200.);
+    let title = bounds(cx, "tab-title-0");
+    hover_for_tooltip(cx, point(title.left() + px(6.), title.center().y));
+    assert!(
+        cx.debug_bounds("tooltip-card").is_none(),
+        "a title that fits needs no tooltip"
+    );
 }
 
 /// #246: a tooltip at the mouse starts below the pointer's arrow, not at its tip, so the arrow

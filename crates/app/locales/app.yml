@@ -4410,6 +4410,14 @@ menu.move_to_new_folder:
   es: Mover a carpeta nueva
   pt-BR: Mover para nova pasta
   ja: 新しいフォルダーに移動
+menu.dissolve_folder:
+  en: Dissolve folder
+  zh-TW: 解散資料夾
+  zh-CN: 解散文件夹
+  de: Ordner auflösen
+  es: Disolver carpeta
+  pt-BR: Dissolver pasta
+  ja: フォルダーを解散
 menu.copy_to_other_pane:
   en: Copy to other pane
   zh-TW: 複製到另一個窗格
@@ -6782,6 +6790,14 @@ op.new_folder:
   es: Nueva carpeta
   pt-BR: Nova pasta
   ja: 新しいフォルダー
+op.dissolve_folder:
+  en: Dissolve folder
+  zh-TW: 解散資料夾
+  zh-CN: 解散文件夹
+  de: Ordner auflösen
+  es: Disolver carpeta
+  pt-BR: Dissolver pasta
+  ja: フォルダーを解散
 op.new_file:
   en: New file
   zh-TW: 新增檔案

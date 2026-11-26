@@ -122,6 +122,8 @@ pub(crate) enum MenuCommand {
     Compress,
     /// Move the selection into a new folder.
     MoveToNewFolder,
+    /// Folder item: move its contents to the parent, then recycle the empty folder.
+    DissolveFolder,
     /// Split view: copy the selection to the other pane's folder (Alt+C).
     CopyToPeer,
     /// Split view: move the selection to the other pane's folder (Alt+M).
@@ -303,7 +305,7 @@ const fn glyph_for(command: MenuCommand) -> Option<Icon> {
         C::ImportSettings => Icon::Settings,
         C::SetBackground => Icon::Image,
         C::KeepOnDevice => Icon::Drive,
-        C::OpenFileLocation | C::GoToLinkTarget => Icon::Folder,
+        C::OpenFileLocation | C::GoToLinkTarget | C::DissolveFolder => Icon::Folder,
         C::ToggleSearchNetwork | C::SearchInFolder => Icon::Search,
         C::FreeUpSpace => Icon::Cloud,
         C::AddToShelf => Icon::Shelf,
@@ -1593,6 +1595,16 @@ impl Explorer {
                 None,
                 C::MoveToNewFolder,
             ));
+            // A real local folder (not a drive or share root) can be dissolved into its parent.
+            if single
+                && *is_dir
+                && path.file_name().is_some()
+                && arke_core::net::bare_server(path).is_none()
+                && !arke_core::net::is_share_root(path)
+                && !arke_core::remote::is_remote(path)
+            {
+                entries.push(item(t!("menu.dissolve_folder"), None, C::DissolveFolder));
+            }
         }
         // Split view: Alt+C / Alt+M are hard to find from the keyboard alone.
         if self.pane.peer.is_some() {
@@ -2023,6 +2035,7 @@ impl Explorer {
             C::OpenTerminal => self.open_terminal(&targets),
             C::Compress => self.start_compress(&targets, cx),
             C::MoveToNewFolder => self.move_into_new_folder(cx),
+            C::DissolveFolder => self.dissolve_folder(cx),
             C::CopyToPeer | C::MoveToPeer => self.transfer_to_peer(command == C::MoveToPeer, cx),
             C::OpenInNewWindow => {
                 if let Some((path, true)) = targets.first().cloned() {
@@ -3698,6 +3711,7 @@ fn pref_key(entry: &MenuEntry) -> Option<&'static str> {
             C::KeepOnDevice | C::FreeUpSpace => Some("cloud"),
             C::AddToShelf => Some("shelf"),
             C::MoveToNewFolder => Some("move_new_folder"),
+            C::DissolveFolder => Some("dissolve_folder"),
             _ => None,
         },
         MenuEntry::Submenu { shell: true, .. } => Some("more_options"),

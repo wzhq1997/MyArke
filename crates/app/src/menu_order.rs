@@ -15,7 +15,7 @@ use std::cell::RefCell;
 
 /// The entries in their built-in order: a folder's menu, top to bottom (the folder
 /// background's "View" with the "New" it comes after there).
-pub(crate) const DEFAULT: [&str; 20] = [
+pub(crate) const DEFAULT: [&str; 21] = [
     "open",
     "new_tab",
     "new",
@@ -27,6 +27,7 @@ pub(crate) const DEFAULT: [&str; 20] = [
     "set_background",
     "import_settings",
     "move_new_folder",
+    "dissolve_folder",
     "new_window",
     "open_with",
     "shelf",
@@ -309,7 +310,7 @@ mod tests {
     #[test]
     fn a_moved_entry_joins_the_group_it_lands_in() {
         // Copy path dragged right under Open: it joins Open's group; its own keeps its separator.
-        let order = moved(&DEFAULT, 15, 1);
+        let order = moved(&DEFAULT, 16, 1);
         assert_eq!(
             arranged(&FOLDER, &order),
             [

@@ -363,6 +363,7 @@ pub(crate) fn changes_share_list(op: &FileOp) -> bool {
         FileOp::Rename { path, .. } => is_share_root(path),
         FileOp::RenameMany { items } => items.iter().any(|(p, _)| is_share_root(p)),
         FileOp::NewFolder { parent, .. } | FileOp::NewFile { parent, .. } => into_server(parent),
+        FileOp::DissolveFolder { folder } => any_share(std::slice::from_ref(folder)),
     }
 }
 
@@ -597,6 +598,10 @@ fn op_paths(op: &FileOp) -> Vec<PathBuf> {
         FileOp::Rename { path, .. } => vec![path.clone()],
         FileOp::RenameMany { items } => items.iter().map(|(p, _)| p.clone()).collect(),
         FileOp::NewFolder { parent, .. } | FileOp::NewFile { parent, .. } => vec![parent.clone()],
+        FileOp::DissolveFolder { folder } => folder.parent().map_or_else(
+            || vec![folder.clone()],
+            |p| vec![folder.clone(), p.to_path_buf()],
+        ),
     }
 }
 
@@ -1658,6 +1663,38 @@ impl Explorer {
             });
         });
         cx.notify();
+    }
+
+    /// "Dissolve folder": move the folder's contents into its parent, then recycle the empty folder.
+    /// The copy engine runs the moves and the recycle in one batch, so there is one progress item
+    /// and one undo step that puts everything back.
+    pub(super) fn dissolve_folder(&mut self, cx: &mut Context<Self>) {
+        if self.search_mode {
+            return;
+        }
+        let Some(model) = &self.model else { return };
+        let targets = self.selected_targets();
+        let [(folder, name)] = targets.as_slice() else {
+            return;
+        };
+        let is_dir = model.entries.iter().any(|e| {
+            e.name.as_ref() == name.as_ref() && e.kind == arke_core::entry::EntryKind::Dir
+        });
+        if !is_dir
+            || folder.file_name().is_none()
+            || arke_core::net::bare_server(folder).is_some()
+            || arke_core::net::is_share_root(folder)
+            || arke_core::remote::is_remote(folder)
+        {
+            return;
+        }
+        self.run_op(
+            FileOp::DissolveFolder {
+                folder: folder.clone(),
+            },
+            OpFollowUp::default(),
+            cx,
+        );
     }
 
     /// "New text document": picks a unique name like new folder, then renames it with only the stem
