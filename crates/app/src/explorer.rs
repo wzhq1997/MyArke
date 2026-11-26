@@ -6,6 +6,7 @@
 //! Directory I/O goes through `DirService`, search through `SearchService`, and Shell calls run
 //! on background threads. Results come back over flume channels and are handled in `handle_event`.
 
+use parking_lot::RwLock;
 use rust_i18n::t;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -121,7 +122,7 @@ use crate::bench::{Bench, BenchStep};
 use crate::media::MediaStore;
 use crate::press_guard::is_double_click;
 use crate::settings::{Density, SettingsStore};
-use crate::shell::{Place, Shell};
+use crate::shell::{Place, PlacesStage, Shell};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme;
 
@@ -305,12 +306,22 @@ pub(crate) struct Services {
     /// SFTP and WebDAV servers (sign-in, host keys); `fs` and `shell` already route remote
     /// paths there.
     pub(crate) remotes: Arc<arke_remote::Remotes>,
+    /// Places from the last load, shared by windows of this process. A window reopened from the
+    /// tray draws its first frame before a fresh load can finish: starting with these keeps the
+    /// drives, cloud places and their labels from popping in a couple of seconds later.
+    pub(crate) places: Arc<RwLock<Vec<Place>>>,
+}
+
+/// An empty places cache, for callers building the services themselves.
+pub(crate) fn new_places_cache() -> Arc<RwLock<Vec<Place>>> {
+    Arc::new(RwLock::new(Vec::new()))
 }
 
 pub(crate) enum AppEvent {
     Io(IoEvent),
     Search(SearchResults),
-    Places(Vec<Place>),
+    /// Places for one stage of the sidebar load: local first, everything after.
+    Places(Vec<Place>, PlacesStage),
     /// Refreshed disk capacity: (root, (free, total)).
     DiskSpace(Vec<(PathBuf, (u64, u64))>),
     OpenFailed {
@@ -1190,6 +1201,9 @@ impl Explorer {
             (s.default_sort(), s.default_view)
         };
 
+        // A reopened window can show the places it already had on the last frame, without waiting
+        // for the background load below.
+        let cached_places = services.places.read().clone();
         let mut this = Self {
             services,
             events_tx,
@@ -1324,7 +1338,7 @@ impl Explorer {
             closing_notice: None,
             notice_undo: None,
             notice_action: None,
-            places: Vec::new(),
+            places: cached_places,
             pane: PaneInfo::default(),
             compare: None,
             click_select: None,
@@ -1438,7 +1452,13 @@ impl Explorer {
             let shell = Arc::clone(&services.shell);
             let tx = events_tx.clone();
             spawn_thread("places", move || {
-                let _ = tx.send(AppEvent::Places(shell.load_places()));
+                // Known folders and fixed disks need no network or capacity queries; show them
+                // first, then replace the list with everything including cloud drives and spaces.
+                let _ = tx.send(AppEvent::Places(
+                    shell.load_places_stage(PlacesStage::Fast),
+                    PlacesStage::Fast,
+                ));
+                let _ = tx.send(AppEvent::Places(shell.load_places(), PlacesStage::Full));
             });
         }
 
@@ -1807,7 +1827,7 @@ impl Explorer {
         let shell = Arc::clone(&self.services.shell);
         let tx = self.events_tx.clone();
         spawn_thread("places", move || {
-            let _ = tx.send(AppEvent::Places(shell.load_places()));
+            let _ = tx.send(AppEvent::Places(shell.load_places(), PlacesStage::Full));
         });
     }
 
@@ -2127,9 +2147,12 @@ impl Explorer {
     #[allow(clippy::too_many_lines, reason = "one short arm per background event")]
     fn handle_event(&mut self, event: AppEvent, cx: &mut Context<Self>) {
         match event {
-            AppEvent::Places(places) => {
-                // The first places of a window: Quick Access pins from File Explorer (#45).
-                crate::quick_access::refresh(&self.services.shell, places.clone(), cx);
+            AppEvent::Places(places, stage) => {
+                if stage == PlacesStage::Full {
+                    // Quick Access pins are added to favorites once, with the complete list.
+                    crate::quick_access::refresh(&self.services.shell, places.clone(), cx);
+                }
+                *self.services.places.write() = places.clone();
                 self.places = places;
                 self.folder_view_on_places(cx);
                 cx.notify();

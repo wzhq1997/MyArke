@@ -18,7 +18,7 @@
 //! only after "Trust and connect". A key that changed since is shown as a warning in the danger
 //! color; replacing it takes a separate, explicit click.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use arke_core::remote::{RemoteUrl, Scheme};
@@ -30,7 +30,7 @@ use gpui::{
 use rust_i18n::t;
 
 use crate::a11y::A11yExt as _;
-use crate::settings::RemotePlace;
+use crate::settings::{RemotePlace, SettingsStore};
 use crate::shell::{NetConnect, Shell};
 use crate::text_input::{InputEvent, TextInput};
 use crate::theme::{self, UiFont as _};
@@ -59,8 +59,8 @@ pub(crate) enum NetDialogKind {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum NetDialogEvent {
-    /// Connected
-    Connected,
+    /// Connected. `place` is set when only a server was given: remember it and list its shares.
+    Connected { place: Option<PathBuf> },
     /// Connected to an SFTP or WebDAV server; `save` adds it to the sidebar.
     RemoteConnected { place: RemotePlace, save: bool },
     /// Canceled or closed
@@ -119,7 +119,7 @@ impl NetDialog {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let folder = cx.new(|cx| TextInput::new(r"\\server\share", cx));
+        let folder = cx.new(|cx| TextInput::new(r"\\server or \\server\share", cx));
         let host = cx.new(|cx| TextInput::new(t!("net.host_hint").to_string(), cx));
         let port = cx.new(|cx| TextInput::new("22", cx));
         let path = cx.new(|cx| TextInput::new("/", cx));
@@ -261,19 +261,25 @@ impl NetDialog {
         cx.notify();
     }
 
-    /// Target share; `None` if empty or not shaped like a share.
+    /// Target share, or a bare SMB server such as `\\192.168.3.33`; `None` if empty or malformed.
     fn target(&self, cx: &App) -> Option<PathBuf> {
         match &self.kind {
             NetDialogKind::Login { share } => Some(share.clone()),
             NetDialogKind::Map { .. } | NetDialogKind::RemoteLogin { .. } => {
                 let text = self.folder.read(cx).committed_text();
                 let text = text.trim().trim_matches('"').trim().replace('/', "\\");
-                // Needs both a host and a share name.
-                let mut parts = text
+                let path = arke_core::path::normalize(Path::new(&text));
+                // Windows can log on to a server with no share name (via IPC$); the rest of Arke
+                // already lists that server's shares, so accept it here too.
+                if arke_core::net::bare_server(&path).is_some() {
+                    return Some(path);
+                }
+                let path_text = path.to_string_lossy();
+                let mut parts = path_text
                     .strip_prefix(r"\\")?
                     .split('\\')
                     .filter(|p| !p.is_empty());
-                (parts.next().is_some() && parts.next().is_some()).then(|| PathBuf::from(text))
+                (parts.next().is_some() && parts.next().is_some()).then_some(path)
             }
         }
     }
@@ -360,9 +366,12 @@ impl NetDialog {
             cx.notify();
             return;
         }
+        // A bare server is signed in through IPC$, not mounted as a drive; its shares are listed
+        // in the tab instead of assigned a letter.
+        let bare = arke_core::net::bare_server(&share).is_some();
         let request = NetConnect {
-            share,
-            drive: self.letter,
+            share: share.clone(),
+            drive: if bare { None } else { self.letter },
             // No user name means the current Windows identity.
             credentials: (!user.is_empty()).then_some((user, password)),
             remember: self.remember,
@@ -385,7 +394,17 @@ impl NetDialog {
                 this.busy = false;
                 this.clear_password(cx);
                 match result {
-                    Ok(()) => cx.emit(NetDialogEvent::Connected),
+                    Ok(()) => {
+                        if bare {
+                            // No mapped drive to show, so keep the server in Network and open it.
+                            SettingsStore::global(cx).update(cx, |store, cx| {
+                                store.update(|settings| settings.remember_share(&share), cx);
+                            });
+                        }
+                        cx.emit(NetDialogEvent::Connected {
+                            place: bare.then_some(share),
+                        });
+                    }
                     Err(why) => {
                         this.error = Some(
                             if why.is_empty() {

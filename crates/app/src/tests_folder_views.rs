@@ -389,6 +389,7 @@ fn remembered_views_survive_a_restart(cx: &mut TestAppContext) {
         fs: two_folders(),
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let again = cx.update(|window, cx| {
         cx.new(|cx| {

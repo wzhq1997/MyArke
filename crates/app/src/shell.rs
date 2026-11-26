@@ -296,6 +296,16 @@ pub(crate) struct Place {
     pub(crate) kind: PlaceKind,
 }
 
+/// How much of the sidebar's places to load. The first frame only needs local places; cloud
+/// folders, mapped drives, WSL and volume capacities follow on the background thread.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PlacesStage {
+    /// Known folders and fixed local drives, without capacity.
+    Fast,
+    /// Everything, including network places and disk capacities.
+    Full,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PlaceKind {
     Folder(KnownFolder),
@@ -846,6 +856,12 @@ pub(crate) trait Shell: Send + Sync + 'static {
     }
     /// Known folders and drive letters. Background thread; must not probe network drives.
     fn load_places(&self) -> Vec<Place>;
+    /// Loads the places needed for `stage`. Shells that can answer cheaply first override this;
+    /// the default loads everything at once. Background thread.
+    fn load_places_stage(&self, stage: PlacesStage) -> Vec<Place> {
+        let _ = stage;
+        self.load_places()
+    }
     /// Requeries (free, total) bytes for these drives (sidebar usage bars). Only asks for volume info, reads no files;
     /// drives that fail are omitted. Background thread.
     fn disk_spaces(&self, roots: &[PathBuf]) -> Vec<(PathBuf, (u64, u64))> {

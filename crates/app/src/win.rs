@@ -3,7 +3,7 @@
 use rust_i18n::t;
 use std::os::windows::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use windows::Win32::Foundation::{FILETIME, HINSTANCE, SYSTEMTIME};
@@ -32,7 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
 use windows::core::{GUID, Interface, PCWSTR};
 
 use crate::shell::{
-    ClipboardFiles, CloudPin, FileOp, KnownFolder, OpOutcome, Place, PlaceKind, Shell, ShellError,
+    ClipboardFiles, CloudPin, FileOp, KnownFolder, OpOutcome, Place, PlaceKind, PlacesStage, Shell,
+    ShellError,
 };
 use crate::win_fileops;
 
@@ -206,6 +207,49 @@ fn known_folder(id: &GUID) -> Option<PathBuf> {
         CoTaskMemFree(Some(pwstr.0 as *const _));
         path
     }
+}
+
+/// The folders Explorer lists above This PC, with the key of each localized label. Shared by
+/// `load_places` and `known_folder_label` so a favorite drawn before the background places load
+/// gets the same name a place gets once they do.
+const KNOWN_FOLDER_PLACES: [(&GUID, &str, KnownFolder); 7] = [
+    (&FOLDERID_Profile, "place.profile", KnownFolder::Profile),
+    (&FOLDERID_Desktop, "place.desktop", KnownFolder::Desktop),
+    (
+        &FOLDERID_Downloads,
+        "place.downloads",
+        KnownFolder::Downloads,
+    ),
+    (
+        &FOLDERID_Documents,
+        "place.documents",
+        KnownFolder::Documents,
+    ),
+    (&FOLDERID_Pictures, "place.pictures", KnownFolder::Pictures),
+    (&FOLDERID_Music, "place.music", KnownFolder::Music),
+    (&FOLDERID_Videos, "place.videos", KnownFolder::Videos),
+];
+
+/// Localized label of a known folder `path`, for a favorite drawn before the places load. The
+/// paths are cached (resolving them is local and quick with `KF_FLAG_DONT_VERIFY`); the translation
+/// is deliberately not, so switching the language changes the very next frame.
+pub(crate) fn known_folder_label(path: &Path) -> Option<String> {
+    static PATHS: OnceLock<Vec<(String, &'static str, KnownFolder)>> = OnceLock::new();
+    let paths = PATHS.get_or_init(|| {
+        KNOWN_FOLDER_PLACES
+            .iter()
+            .filter_map(|(id, label, known)| {
+                known_folder(id).map(|p| (crate::place_names::key(&p), *label, *known))
+            })
+            .collect()
+    });
+    let wanted = crate::place_names::key(path);
+    let (_, label, known) = paths.iter().find(|(key, _, _)| *key == wanted)?;
+    Some(if *known == KnownFolder::Profile {
+        profile_label(path)
+    } else {
+        t!(*label).into_owned()
+    })
 }
 
 fn volume_label(root: &[u16]) -> Option<String> {
@@ -439,8 +483,8 @@ pub(crate) fn supports_mica() -> bool {
     status.is_ok() && info.dwMajorVersion >= 10 && info.dwBuildNumber >= 22000
 }
 
-/// UI language: `ARKE_LANG` wins, otherwise the user locale. Traditional Chinese locales
-/// (TW, HK, MO, Hant) map to zh-TW, other Chinese ones (CN, SG, Hans, plain zh) to zh-CN,
+/// UI language: `ARKE_LANG` wins, otherwise the Windows display language. Traditional Chinese
+/// locales (TW, HK, MO, Hant) map to zh-TW, other Chinese ones (CN, SG, Hans, plain zh) to zh-CN,
 /// Japanese, German, Spanish and Portuguese ones to ja, de, es and pt-BR, everything else to
 /// English.
 pub(crate) fn ui_locale() -> String {
@@ -683,47 +727,72 @@ fn handler_progid(path: &Path) -> Option<String> {
     (!progid.is_empty()).then_some(progid)
 }
 
+/// Known folders only: cheap, local, and useful for the very first frame.
+fn known_folder_places() -> Vec<Place> {
+    KNOWN_FOLDER_PLACES
+        .iter()
+        .filter_map(|(id, label, known)| {
+            let path = known_folder(id)?;
+            let label = if *known == KnownFolder::Profile {
+                profile_label(&path)
+            } else {
+                t!(*label).into_owned()
+            };
+            Some(Place {
+                label,
+                path,
+                kind: PlaceKind::Folder(*known),
+            })
+        })
+        .collect()
+}
+
+/// Fixed local drives without asking for capacity. Volume labels are local; `GetDiskFreeSpaceExW`
+/// and anything network-related are deliberately left for the full load.
+fn fixed_drive_places() -> Vec<Place> {
+    // SAFETY: no arguments; reads the current drive letter bitmask.
+    let mask = unsafe { GetLogicalDrives() };
+    (0..26u8)
+        .filter(|i| mask & (1 << i) != 0)
+        .filter_map(|i| {
+            let letter = char::from(b'A' + i);
+            let root = format!("{letter}:\\");
+            let root_w = wide(std::ffi::OsStr::new(&root));
+            // SAFETY: root_w is NUL-terminated. GetDriveTypeW reads local mount info only.
+            if unsafe { GetDriveTypeW(PCWSTR(root_w.as_ptr())) } != DRIVE_FIXED {
+                return None;
+            }
+            let label = volume_label(&root_w).unwrap_or_else(|| t!("drive.local").into_owned());
+            Some(Place {
+                label: format!("{label} ({letter}:)"),
+                path: PathBuf::from(root),
+                kind: PlaceKind::Drive {
+                    remote: false,
+                    space: None,
+                },
+            })
+        })
+        .collect()
+}
+
 impl Shell for WinShell {
     fn quick_access_pinned(&self) -> Option<Vec<PathBuf>> {
         crate::quick_access::read_windows_pins()
     }
 
     fn load_places(&self) -> Vec<Place> {
+        self.load_places_stage(PlacesStage::Full)
+    }
+
+    fn load_places_stage(&self, stage: PlacesStage) -> Vec<Place> {
         debug_assert!(
             !arke_core::fs::is_ui_thread(),
             "load_places must not run on the UI thread"
         );
-        let mut places = Vec::new();
-        let folders: [(&GUID, &str, KnownFolder); 7] = [
-            (&FOLDERID_Profile, "place.profile", KnownFolder::Profile),
-            (&FOLDERID_Desktop, "place.desktop", KnownFolder::Desktop),
-            (
-                &FOLDERID_Downloads,
-                "place.downloads",
-                KnownFolder::Downloads,
-            ),
-            (
-                &FOLDERID_Documents,
-                "place.documents",
-                KnownFolder::Documents,
-            ),
-            (&FOLDERID_Pictures, "place.pictures", KnownFolder::Pictures),
-            (&FOLDERID_Music, "place.music", KnownFolder::Music),
-            (&FOLDERID_Videos, "place.videos", KnownFolder::Videos),
-        ];
-        for (id, label, known) in folders {
-            if let Some(path) = known_folder(id) {
-                let label = if known == KnownFolder::Profile {
-                    profile_label(&path)
-                } else {
-                    t!(label).into_owned()
-                };
-                places.push(Place {
-                    label,
-                    path,
-                    kind: PlaceKind::Folder(known),
-                });
-            }
+        let mut places = known_folder_places();
+        if stage == PlacesStage::Fast {
+            places.extend(fixed_drive_places());
+            return places;
         }
         // Cloud folders such as OneDrive go before drives, as in Windows Explorer.
         let (roots, pinned) = (cloud_roots(), pinned_cloud_folders());
@@ -2073,6 +2142,24 @@ mod tests {
         assert!(format_drive_result(0xFFFF_FFFE).is_ok());
         assert!(format_drive_result(0xFFFF_FFFF).is_err());
         assert!(format_drive_result(0xFFFF_FFFD).is_err());
+    }
+
+    /// A favorite drawn before the places load must use the translated name, and a language
+    /// change must reach it even though the folder paths are cached.
+    #[test]
+    fn known_folder_label_follows_the_language() {
+        let downloads = KNOWN_FOLDER_PLACES
+            .iter()
+            .find(|(_, _, known)| *known == KnownFolder::Downloads)
+            .and_then(|(id, _, _)| known_folder(id));
+        let Some(path) = downloads else {
+            return;
+        };
+        rust_i18n::set_locale("zh-CN");
+        assert_eq!(known_folder_label(&path).as_deref(), Some("下载"));
+        rust_i18n::set_locale("en");
+        assert_eq!(known_folder_label(&path).as_deref(), Some("Downloads"));
+        assert!(known_folder_label(Path::new(r"C:\no\such\known\folder")).is_none());
     }
 
     /// Real shortcuts in a temp folder: the target reads back, and a name clash gets a number.

@@ -17,6 +17,7 @@ fn services(fs: &Arc<FakeFs>) -> Services {
         fs: Arc::clone(fs) as Arc<dyn arke_core::fs::Fs>,
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     }
 }
 

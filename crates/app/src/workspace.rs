@@ -600,12 +600,18 @@ impl Workspace {
         match event {
             NetDialogEvent::Closed => {}
             NetDialogEvent::UseSystemDialog => self.system_drive_dialog(true, window, cx),
-            NetDialogEvent::Connected => {
+            NetDialogEvent::Connected { place } => {
                 // Reload the sidebar drives and reopen the path in the tab that asked to log in.
                 self.reload_all_places(cx);
                 if let Some((view, path)) = slot.after {
                     view.update(cx, |v, cx| {
                         v.navigate(path, arke_core::NavKind::New, cx);
+                    });
+                } else if let Some(path) = place {
+                    // A bare server was added: show its shares in the active tab.
+                    let view = self.active_view().clone();
+                    view.update(cx, |v, cx| {
+                        v.navigate(path.clone(), arke_core::NavKind::New, cx);
                     });
                 }
             }
