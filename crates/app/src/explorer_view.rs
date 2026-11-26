@@ -29,6 +29,7 @@ use gpui::{
 };
 
 use super::layout;
+use super::toolbar::ToolbarStop as _;
 use super::{
     CopyFiles, CutFiles, DeleteFiles, ErrorAction, Escape, Explorer, ExplorerEvent, FocusOtherPane,
     GoBack, GoForward, GoUp, NewFolder, OpenSelected, PasteFiles, RenameFile, ViewColumns,
@@ -526,17 +527,10 @@ impl Explorer {
                             .text_color(theme::text_muted()),
                     )
                     .tooltip_below(t!("sel.more").to_string())
-                    // A screen reader's Enter: opens where Shift+F10 would (#322).
-                    .a11y_on_click({
-                        let this = cx.entity().downgrade();
-                        move |window, cx| {
-                            let size = window.viewport_size();
-                            let at = gpui::point(size.width / 2., size.height / 3.);
-                            let _ = this.update(cx, |this, cx| {
-                                this.open_context_menu(at, window, cx);
-                            });
-                        }
-                    })
+                    // A screen reader's Enter and the keyboard in the pane row: opens where
+                    // Shift+F10 would (#322).
+                    .a11y_on_click(open_selection_menu(cx.entity().downgrade()))
+                    .toolbar_menu("sel-more", open_selection_menu(cx.entity().downgrade()))
                     // Opens on press, like the other menus.
                     .on_mouse_down(
                         MouseButton::Left,
@@ -1489,99 +1483,134 @@ impl Explorer {
         let cursor = self.search_cursor;
         // "Search in this folder": locations start at that folder, below the folder shown.
         let base = self.search_in_name().map(PathBuf::from);
-        range
-            .filter_map(|ix| results.hits.get(ix).map(|hit| (ix, hit)))
-            .map(|(ix, hit)| {
-                let entry = &hit.entry;
-                let parent = Path::new(&*hit.rel)
-                    .parent()
-                    .filter(|p| !p.as_os_str().is_empty());
-                let location = match (&base, parent) {
-                    (Some(base), Some(parent)) => base.join(parent).display().to_string(),
-                    (Some(base), None) => base.display().to_string(),
-                    (None, Some(parent)) => parent.display().to_string(),
-                    (None, None) => t!("list.here").into_owned(),
-                };
-                self.row_shell(ix, cursor == Some(ix), false, focused, cx)
-                    .a11y_item(ix, cursor == Some(ix), cursor == Some(ix), || {
-                        let modified = entry.modified.map(|t| shell.format_time(t));
-                        let content = hit
-                            .snippet
-                            .as_deref()
-                            .map(|line| t!("search.content_match", line = line).into_owned());
-                        crate::a11y::item_label(
-                            &entry.name,
-                            &[
-                                content.as_deref().unwrap_or_default(),
-                                location.as_str(),
-                                modified.as_deref().unwrap_or_default(),
-                            ],
-                        )
-                    })
-                    // The Name column, as wide as the header's. A content match shows its line
-                    // after the name.
+        // "Similar results" (#396) is a row between hits, not a hit.
+        let similar = self.similar_row();
+        let at = similar.map(|(at, _)| at);
+        let mut rows = Vec::with_capacity(range.len());
+        for row in range {
+            match super::similar::hit_at_row(row, at) {
+                None => {
+                    if let Some((_, kind)) = similar {
+                        rows.push(self.similar_row_element(row, kind, focused, cx));
+                    }
+                }
+                Some(ix) => {
+                    if let Some(hit) = results.hits.get(ix) {
+                        rows.push(self.search_row(
+                            ix,
+                            hit,
+                            cursor,
+                            base.as_deref(),
+                            &shell,
+                            focused,
+                            cx,
+                        ));
+                    }
+                }
+            }
+        }
+        rows
+    }
+
+    /// One search hit's row (`ix` in the hits).
+    fn search_row(
+        &self,
+        ix: usize,
+        hit: &Arc<arke_core::SearchHit>,
+        cursor: Option<usize>,
+        base: Option<&Path>,
+        shell: &Arc<dyn crate::shell::Shell>,
+        focused: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let entry = &hit.entry;
+        let parent = Path::new(&*hit.rel)
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty());
+        let location = match (base, parent) {
+            (Some(base), Some(parent)) => base.join(parent).display().to_string(),
+            (Some(base), None) => base.display().to_string(),
+            (None, Some(parent)) => parent.display().to_string(),
+            (None, None) => t!("list.here").into_owned(),
+        };
+        self.row_shell(ix, cursor == Some(ix), false, focused, cx)
+            .a11y_item(ix, cursor == Some(ix), cursor == Some(ix), || {
+                let modified = entry.modified.map(|t| shell.format_time(t));
+                let content = hit
+                    .snippet
+                    .as_deref()
+                    .map(|line| t!("search.content_match", line = line).into_owned());
+                crate::a11y::item_label(
+                    &entry.name,
+                    &[
+                        content.as_deref().unwrap_or_default(),
+                        location.as_str(),
+                        modified.as_deref().unwrap_or_default(),
+                    ],
+                )
+            })
+            // The Name column, as wide as the header's. A content match shows its line
+            // after the name.
+            .child(
+                self.name_block()
+                    .child(entry_visual(entry, None, theme::icon(), theme::icon()))
                     .child(
-                        self.name_block()
-                            .child(entry_visual(entry, None, theme::icon(), theme::icon()))
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .flex()
+                            .items_center()
+                            .gap(theme::s_12())
                             .child(
+                                div()
+                                    .debug_selector({
+                                        let name = Arc::clone(&entry.name);
+                                        move || format!("name:{name}")
+                                    })
+                                    .when(hit.snippet.is_some(), |d| {
+                                        d.flex_none().max_w(crate::theme::scaled_px(240.))
+                                    })
+                                    .min_w_0()
+                                    .truncate()
+                                    .child(SharedString::from(Arc::clone(&entry.name))),
+                            )
+                            .children(hit.snippet.clone().map(|line| {
                                 div()
                                     .flex_1()
                                     .min_w_0()
-                                    .flex()
-                                    .items_center()
-                                    .gap(theme::s_12())
-                                    .child(
-                                        div()
-                                            .debug_selector({
-                                                let name = Arc::clone(&entry.name);
-                                                move || format!("name:{name}")
-                                            })
-                                            .when(hit.snippet.is_some(), |d| {
-                                                d.flex_none().max_w(crate::theme::scaled_px(240.))
-                                            })
-                                            .min_w_0()
-                                            .truncate()
-                                            .child(SharedString::from(Arc::clone(&entry.name))),
-                                    )
-                                    .children(hit.snippet.clone().map(|line| {
-                                        div()
-                                            .flex_1()
-                                            .min_w_0()
-                                            .truncate()
-                                            .text_size(theme::fs_12())
-                                            .text_color(theme::text_muted())
-                                            .child(SharedString::from(line))
-                                    })),
-                            ),
-                    )
+                                    .truncate()
+                                    .text_size(theme::fs_12())
+                                    .text_color(theme::text_muted())
+                                    .child(SharedString::from(line))
+                            })),
+                    ),
+            )
+            .child(
+                div()
+                    .w(theme::col_location())
+                    .flex_none()
+                    // Keep the end of long paths (the folders nearest the file).
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .text_ellipsis_start()
+                    .text_size(theme::fs_12())
+                    .text_color(theme::text_muted())
+                    .child(location),
+            )
+            .child(
+                div()
+                    .w(crate::prefs::modified_width())
+                    .flex_none()
+                    .text_size(theme::fs_12())
+                    .text_color(theme::text_muted())
                     .child(
-                        div()
-                            .w(theme::col_location())
-                            .flex_none()
-                            // Keep the end of long paths (the folders nearest the file).
-                            .overflow_hidden()
-                            .whitespace_nowrap()
-                            .text_ellipsis_start()
-                            .text_size(theme::fs_12())
-                            .text_color(theme::text_muted())
-                            .child(location),
-                    )
-                    .child(
-                        div()
-                            .w(crate::prefs::modified_width())
-                            .flex_none()
-                            .text_size(theme::fs_12())
-                            .text_color(theme::text_muted())
-                            .child(
-                                entry
-                                    .modified
-                                    .map_or_default(|t| shell.format_time(t)),
-                            ),
-                    )
-                    .child(size_cell(entry, super::sizes::FolderSize::Unknown))
-                    .into_any_element()
-            })
-            .collect()
+                        entry
+                            .modified
+                            .map_or_default(|t| shell.format_time(t)),
+                    ),
+            )
+            .child(size_cell(entry, super::sizes::FolderSize::Unknown))
+            .into_any_element()
     }
 
     /// List content: rows, tiles, search results, or the empty/loading state.
@@ -1608,10 +1637,10 @@ impl Explorer {
                 Some(r) if r.hits.is_empty() && !r.searching => {
                     self.no_match_state(t!("list.no_match").into_owned(), None, cx)
                 }
-                Some(r) => {
+                Some(_) => {
                     let list = uniform_list(
                         "search-results",
-                        r.hits.len(),
+                        self.search_row_count(),
                         cx.processor(move |this, range: Range<usize>, _window, cx| {
                             this.render_search_rows(range, focused, cx)
                         }),
@@ -1839,7 +1868,7 @@ impl Explorer {
             let cancel = Arc::clone(progress);
             return toast(
                 "toast-ops",
-                Icon::Copy,
+                crate::op_center::op_icon(verb),
                 t!("toast.op_detail", op = op, detail = detail).into_owned(),
                 Tone::Normal,
                 fraction.map_or(Progress::Indeterminate, Progress::Fraction),
@@ -1873,7 +1902,7 @@ impl Explorer {
         let cancel = Arc::clone(progress);
         toast(
             "toast-ops",
-            Icon::Copy,
+            crate::op_center::op_icon(verb),
             text,
             Tone::Normal,
             bar,
@@ -2085,7 +2114,8 @@ impl Explorer {
     }
 
     /// The faded-out notice, where it was. Drawn only when no other toast is up, so it never
-    /// overlaps one. Its buttons are drawn (inert) so the text wraps as it did.
+    /// overlaps one. Its buttons are drawn (inert) so the text wraps, and the buttons sit beside
+    /// or below it, as they did.
     fn render_leaving_notice(&self) -> Option<AnyElement> {
         let ghost = self.closing_notice.as_ref()?;
         let (text, undo) = &ghost.value;
@@ -2222,34 +2252,15 @@ fn toast_body(
             theme::overlay()
         })
         .shadow(theme::elev_float())
-        .child(
-            div()
-                .flex()
-                .items_center()
-                .gap(theme::s_8())
-                .child(glyph.size(theme::icon()).flex_none())
-                .child(div().flex_1().min_w_0().line_clamp(4).child(text))
-                .children(
-                    actions
-                        .into_iter()
-                        .enumerate()
-                        .map(|(ix, (label, on_click))| {
-                            div()
-                                .id(("toast-action", ix))
-                                .debug_selector(move || format!("{id}-action-{ix}"))
-                                .a11y_button(label.to_string())
-                                .flex_none()
-                                .px(theme::s_6())
-                                .rounded(theme::r_4())
-                                .cursor_pointer()
-                                .text_size(theme::fs_12())
-                                .text_color(theme::text_muted())
-                                .hover(|s| s.bg(theme::wash_strong()).text_color(theme::text()))
-                                .child(label.to_string())
-                                .on_click(on_click)
-                        }),
-                ),
-        )
+        .child(toast_row(
+            id,
+            glyph.size(theme::icon()).flex_none(),
+            text,
+            actions,
+            // Progress text changes as the job runs: its Cancel stays beside it rather than
+            // jumping between lines whenever the text gets a little longer or shorter.
+            matches!(progress, Progress::None),
+        ))
         .children(
             match progress {
                 Progress::None => None,
@@ -2275,6 +2286,89 @@ fn toast_body(
             }),
         )
         .into_any_element()
+}
+
+/// Most lines a toast's message takes before it ends in "…". With the buttons out of the way the
+/// message has about 300 px, so six lines hold some 250 characters: an error naming a long full
+/// path still reads whole, and even a clamped toast stays under 200 px tall.
+const TOAST_LINES: usize = 6;
+
+/// A toast's icon and message, then its buttons. Like a WinUI InfoBar, the buttons sit beside a
+/// message that fits on one line next to them ("Copied", Close) and, when `wrap` is set and it
+/// doesn't, move to a line of their own below it, right-aligned, so the message gets the toast's
+/// whole width instead of a narrow column beside them.
+fn toast_row(
+    id: &'static str,
+    glyph: impl IntoElement,
+    text: String,
+    actions: Vec<(std::borrow::Cow<'static, str>, Listener)>,
+    wrap: bool,
+) -> impl IntoElement {
+    let buttons = (!actions.is_empty()).then(|| {
+        div()
+            .debug_selector(move || format!("{id}-actions"))
+            .ml_auto()
+            .flex()
+            .flex_none()
+            .items_center()
+            .gap(theme::s_8())
+            .children(
+                actions
+                    .into_iter()
+                    .enumerate()
+                    .map(|(ix, (label, on_click))| {
+                        toast_button(id, ix, label.into_owned(), on_click)
+                    }),
+            )
+    });
+    let row = div()
+        .flex()
+        .items_center()
+        .gap_x(theme::s_8())
+        .gap_y(theme::s_4());
+    let row = if wrap { row.flex_wrap() } else { row };
+    row.child(
+        // Grows from the message's own width (not `flex_1`'s zero basis), so a message too wide
+        // to sit beside the buttons pushes them to the next line.
+        div()
+            .flex_auto()
+            .min_w_0()
+            .flex()
+            .items_center()
+            .gap(theme::s_8())
+            .child(glyph)
+            .child(
+                div()
+                    .debug_selector(move || format!("{id}-text"))
+                    .min_w_0()
+                    .line_clamp(TOAST_LINES)
+                    .text_ellipsis()
+                    .child(text),
+            ),
+    )
+    .children(buttons)
+}
+
+/// One of a toast's buttons: quiet text that lights up on hover.
+fn toast_button(
+    id: &'static str,
+    ix: usize,
+    label: String,
+    on_click: Listener,
+) -> impl IntoElement {
+    div()
+        .id(("toast-action", ix))
+        .debug_selector(move || format!("{id}-action-{ix}"))
+        .a11y_button(label.clone())
+        .flex_none()
+        .px(theme::s_6())
+        .rounded(theme::r_4())
+        .cursor_pointer()
+        .text_size(theme::fs_12())
+        .text_color(theme::text_muted())
+        .hover(|s| s.bg(theme::wash_strong()).text_color(theme::text()))
+        .child(label)
+        .on_click(on_click)
 }
 
 pub(crate) fn tooltip(
@@ -2328,6 +2422,20 @@ pub(super) fn vertical_divider() -> impl IntoElement {
         .bg(theme::line())
 }
 
+/// Opens the selection's menu where Shift+F10 would: "⋯" pressed by a screen reader or from the
+/// keyboard.
+fn open_selection_menu(
+    this: gpui::WeakEntity<Explorer>,
+) -> impl Fn(&mut Window, &mut App) + 'static {
+    move |window, cx| {
+        let size = window.viewport_size();
+        let at = gpui::point(size.width / 2., size.height / 3.);
+        let _ = this.update(cx, |this, cx| {
+            this.open_context_menu(at, window, cx);
+        });
+    }
+}
+
 /// Top bar icon button: no background until hover.
 pub(crate) fn ghost_button(
     id: &'static str,
@@ -2362,7 +2470,7 @@ pub(crate) fn ghost_button_turned(
         .when(enabled, |d| {
             d.cursor_pointer()
                 .hover(|s| s.bg(theme::wash_strong()))
-                .on_click(on_click)
+                .toolbar_button(id, on_click)
         })
         .child(
             svg()
@@ -2431,7 +2539,7 @@ fn action_button(
         // At half width keep only the icon and move the label to the tooltip.
         .when(compact, |d| d.px(theme::s_6()).tooltip_below(label.clone()))
         .when(!compact, |d| d.child(label.clone()))
-        .on_click(on_click)
+        .toolbar_button(id, on_click)
 }
 
 /// "Clear selection Esc"; just × when narrow.
@@ -2463,7 +2571,7 @@ fn clear_selection_button(
             d.child(t!("sel.clear").to_string()).child(kbd("Esc"))
         })
         .tooltip_below(t!("sel.clear").to_string() + " (Esc)")
-        .on_click(on_click)
+        .toolbar_button("sel-clear", on_click)
 }
 
 /// Outlined button ("Retry", "Up" on the error screen).
@@ -2535,9 +2643,13 @@ fn preview_button(on: bool, cx: &mut Context<Explorer>) -> impl IntoElement + us
                     theme::text_subtle()
                 }),
         )
-        .on_click(cx.listener(move |_, _: &ClickEvent, _, cx| {
-            SettingsStore::global(cx).update(cx, |s, cx| s.update(|st| st.preview_pane = !on, cx));
-        }))
+        .toolbar_button(
+            "toggle-preview",
+            cx.listener(move |_, _: &ClickEvent, _, cx| {
+                SettingsStore::global(cx)
+                    .update(cx, |s, cx| s.update(|st| st.preview_pane = !on, cx));
+            }),
+        )
         .tooltip_below(t!("ctx.preview"))
 }
 
@@ -2567,7 +2679,8 @@ fn split_button(
         .cursor_pointer()
         .when(split, |d| d.bg(theme::wash_strong()))
         .when(!split, |d| d.hover(|s| s.bg(theme::wash())))
-        .on_click(on_click)
+        // One id in both states, so the keyboard stays on it.
+        .toolbar_button("toggle-split", on_click)
         .child(
             svg()
                 .path(Icon::Split.path())
@@ -2624,7 +2737,7 @@ fn peer_button(
         .a11y_lazy(gpui::Role::Button, || label.to_string())
         .aria_keyshortcuts(key)
         .tooltip_below(format!("{label} ({key})"))
-        .on_click(on_click)
+        .toolbar_button(id, on_click)
 }
 
 /// One segment of a segmented toggle.
@@ -2648,7 +2761,7 @@ fn segment(
             d.bg(theme::segment_thumb()).shadow(theme::elev_thumb())
         })
         .when(!active, |d| d.hover(|s| s.bg(theme::wash())))
-        .on_click(on_click)
+        .toolbar_button(id, on_click)
         .child(
             svg()
                 .path(icon.path())
@@ -3123,7 +3236,7 @@ impl Explorer {
         self.sync_parent_column();
         self.sync_link_targets();
         self.sync_folder_sizes(cx);
-        self.sync_cloud_states(cx);
+        self.sync_cloud_states(window, cx);
     }
 }
 

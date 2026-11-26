@@ -15,10 +15,10 @@ use std::ops::Range;
 
 use gpui::{
     AnimationExt as _, AnyElement, App, Bounds, ClickEvent, ClipboardItem, Context, CursorStyle,
-    ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter, FocusHandle,
-    Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, TextRun,
-    UTF16Selection, UnderlineStyle, Window, actions, anchored, deferred, div, fill, point,
+    DispatchPhase, ElementId, ElementInputHandler, Entity, EntityInputHandler, EventEmitter,
+    FocusHandle, Focusable, GlobalElementId, KeyBinding, LayoutId, MouseButton, MouseDownEvent,
+    MouseMoveEvent, MouseUpEvent, PaintQuad, Pixels, Point, ShapedLine, SharedString, Style,
+    TextRun, UTF16Selection, UnderlineStyle, Window, actions, anchored, deferred, div, fill, point,
     prelude::*, px, relative, size, svg,
 };
 use rust_i18n::t;
@@ -106,6 +106,10 @@ pub(crate) enum InputEvent {
     Changed,
 }
 
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent facts about one field: masked, being selected, a tab stop"
+)]
 pub(crate) struct TextInput {
     focus_handle: FocusHandle,
     content: SharedString,
@@ -120,6 +124,8 @@ pub(crate) struct TextInput {
     is_selecting: bool,
     /// Password field: drawn as dots, copy and cut disabled
     masked: bool,
+    /// Tab stops here and the page scrolls it into view ([`Self::key_stop`]).
+    key_stop: bool,
     /// Earlier states (content and selection), newest last, for Undo.
     undo: Vec<(SharedString, Range<usize>)>,
     /// What the newest Undo step is made of and where the caret sits after it, so the next
@@ -181,6 +187,16 @@ const MASK: &str = "•";
 impl EventEmitter<InputEvent> for TextInput {}
 
 impl TextInput {
+    /// A field Tab stops at, on a page that moves through its controls with Tab (Settings, #322;
+    /// see `keynav.rs`).
+    #[must_use]
+    pub(crate) fn key_stop(mut self) -> Self {
+        // A tracked handle is a tab stop by its own setting, not the element's.
+        self.focus_handle = self.focus_handle.tab_index(0).tab_stop(true);
+        self.key_stop = true;
+        self
+    }
+
     pub(crate) fn new(placeholder: impl Into<SharedString>, cx: &mut Context<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
@@ -194,6 +210,7 @@ impl TextInput {
             scroll_x: Pixels::ZERO,
             is_selecting: false,
             masked: false,
+            key_stop: false,
             undo: Vec::new(),
             step: None,
             erasing: None,
@@ -1261,6 +1278,18 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
+        // While a drag-selection is in progress the field keeps following the pointer outside its
+        // own bounds (#410). Registered only then, so an idle field costs nothing.
+        if self.input.read(cx).is_selecting {
+            let input = self.input.clone();
+            window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
+                if phase == DispatchPhase::Capture
+                    && event.pressed_button == Some(MouseButton::Left)
+                {
+                    input.update(cx, |input, cx| input.on_mouse_move(event, window, cx));
+                }
+            });
+        }
         let Some(line) = prepaint.line.take() else {
             return;
         };
@@ -1600,6 +1629,7 @@ impl Render for TextInput {
             .flex_1()
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle(cx))
+            .when(self.key_stop, crate::keynav::KeyStop::key_stop_plain)
             .cursor(CursorStyle::IBeam)
             .on_action(cx.listener(Self::backspace))
             .on_action(cx.listener(Self::delete))
@@ -1752,6 +1782,46 @@ mod stale_layout_tests {
                 });
             });
         }
+    }
+    /// Dragging a selection out of the field keeps extending it to the nearest end; a move
+    /// without a press does nothing (#410).
+    #[gpui::test]
+    fn drag_selection_follows_the_pointer_outside_the_field(cx: &mut gpui::TestAppContext) {
+        let (input, cx) = cx.add_window_view(|_, cx| {
+            let mut input = TextInput::new("", cx);
+            input.set_text("hello world", cx);
+            input
+        });
+        cx.run_until_parked();
+        let (bounds, line) = input.update(cx, |input, _| {
+            (
+                input.last_bounds.expect("drawn"),
+                input.last_layout.clone().expect("drawn"),
+            )
+        });
+        let mid = point(bounds.left() + line.x_for_index(5), bounds.center().y);
+        let right = point(bounds.right() + px(300.), bounds.center().y);
+        let left = point(bounds.left() - px(300.), bounds.center().y);
+        let range = |cx: &mut gpui::VisualTestContext| {
+            input.update(cx, |input, _| input.selected_range.clone())
+        };
+
+        // No press: moving outside changes nothing.
+        cx.simulate_mouse_move(right, None, gpui::Modifiers::none());
+        assert_eq!(range(cx), 11..11);
+
+        cx.simulate_mouse_down(mid, MouseButton::Left, gpui::Modifiers::none());
+        cx.simulate_mouse_move(right, Some(MouseButton::Left), gpui::Modifiers::none());
+        assert_eq!(range(cx), 5..11);
+        cx.simulate_mouse_move(left, Some(MouseButton::Left), gpui::Modifiers::none());
+        assert_eq!(range(cx), 0..5);
+        cx.simulate_mouse_move(right, Some(MouseButton::Left), gpui::Modifiers::none());
+        cx.simulate_mouse_up(right, MouseButton::Left, gpui::Modifiers::none());
+        assert_eq!(range(cx), 5..11);
+
+        // After the release, moving does not extend the selection any more.
+        cx.simulate_mouse_move(left, None, gpui::Modifiers::none());
+        assert_eq!(range(cx), 5..11);
     }
 }
 
