@@ -1,7 +1,8 @@
 //! User settings: pins, favorite tiles, recent folders, tab layout, density, and the Settings page toggles.
 //!
 //! Stored in `%APPDATA%\Arke\settings.json`, never the registry. Reads and writes happen on background
-//! threads. Startup renders with defaults and updates once the file is read. Writes are debounced to
+//! threads. Startup renders with defaults and updates once the file is read; the UI language is the
+//! exception, read before the first frame by [`startup_language`]. Writes are debounced to
 //! coalesce bursts, and go to a temp file that is then renamed so a crash cannot leave a broken file.
 //!
 //! One app-wide copy (`Global`) shared by all windows.
@@ -19,8 +20,9 @@ use crate::explorer::ViewMode;
 /// Debounce for coalescing consecutive changes into one write.
 const SAVE_DELAY: Duration = Duration::from_millis(500);
 /// How long startup waits for the settings file (read in the background, usually 1-2 ms). If it arrives
-/// in time the first window opens with the saved size, tabs and language; otherwise defaults are used
-/// and the file is applied when it arrives (e.g. %APPDATA% on a slow network).
+/// in time the first window opens with the saved size and tabs; otherwise defaults are used and the
+/// file is applied when it arrives (e.g. %APPDATA% on a slow network). The UI language is read
+/// before the first frame regardless, by [`startup_language`].
 const STARTUP_WAIT: Duration = Duration::from_millis(60);
 /// Most windows a restored session opens: each takes a moment to open, and many at once would
 /// keep a second `arke.exe` waiting.
@@ -937,7 +939,9 @@ impl Settings {
         if arke_core::net::server_of(path).is_none() {
             return;
         }
-        let Some(share) = arke_core::net::share_root(path) else {
+        let Some(share) = arke_core::net::share_root(path).or_else(|| {
+            arke_core::net::bare_server(path).map(|server| PathBuf::from(format!(r"\\{server}")))
+        }) else {
             return;
         };
         if self.net_places.first() == Some(&share) {
@@ -1366,6 +1370,31 @@ pub(crate) fn turn_off_takeover(path: &Path) -> bool {
     }
     settings.open_folders_in_arke = false;
     save(path, &settings).is_ok()
+}
+
+/// Just the saved UI language, for reading before the rest of the settings.
+#[derive(Deserialize)]
+struct StartupSettings {
+    #[serde(default)]
+    language: Language,
+}
+
+/// The saved UI language, read before the first frame.
+///
+/// The rest of the settings load in the background (`SettingsStore::init`) and can arrive after
+/// the first window has been drawn. Waiting for them would show that frame in the system
+/// language, and switching afterwards cannot be hidden: every string changes. The field is read
+/// here instead, before the window is created (still before `mark_ui_thread`).
+pub(crate) fn startup_language() -> Option<Language> {
+    default_path().as_deref().and_then(language_at)
+}
+
+fn language_at(path: &Path) -> Option<Language> {
+    let bytes = std::fs::read(path).ok()?;
+    let bytes = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+    serde_json::from_slice::<StartupSettings>(bytes)
+        .ok()
+        .map(|settings| settings.language)
 }
 
 /// The "Win+E and the File Explorer icon open Arke too" switch, read straight from the settings
@@ -2285,6 +2314,28 @@ mod tests {
             "off unless set"
         );
         assert!(!win_e_switch(b"{ broken"));
+    }
+
+    /// The language of the first frame is read without the rest of the settings, including from a
+    /// file written by an older version that lacks most fields.
+    #[test]
+    fn the_startup_language_is_read_before_the_rest_of_the_settings() {
+        let dir =
+            std::env::temp_dir().join(format!("arke-startup-language-{}", std::process::id()));
+        let path = dir.join("settings.json");
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        std::fs::write(&path, br#"{"language":"zh_cn","show_hidden":true}"#).unwrap();
+        assert_eq!(language_at(&path), Some(Language::ZhCn));
+
+        std::fs::write(&path, b"\xEF\xBB\xBF{\"language\":\"system\"}").unwrap();
+        assert_eq!(language_at(&path), Some(Language::System));
+
+        std::fs::write(&path, b"{ broken").unwrap();
+        assert_eq!(language_at(&path), None);
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

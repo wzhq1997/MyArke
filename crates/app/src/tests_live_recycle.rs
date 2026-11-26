@@ -72,6 +72,7 @@ fn delete_and_undo_through_arke_with_the_switch_on_and_off(cx: &mut TestAppConte
         fs: Arc::new(RealFs),
         shell: Arc::new(WinShell),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let (ws, cx) = setup_workspace_services(cx, services, start.clone());
     let view = ws.update(cx, |ws, _| ws.active_view().clone());

@@ -803,9 +803,13 @@ fn tile_text_width(list: Pixels, per_row: usize) -> Pixels {
 
 /// What a favorite on the tiles is called without a name of its own: the place's name (a mapped
 /// drive's custom one included), or the folder's.
+///
+/// A window reopened from the tray draws before the background places load, so `places` can still
+/// be empty. Known folders then fall back to their translated names instead of the folder names on
+/// disk ("Desktop" etc.), which would show English for one frame even when the UI is Chinese.
 fn favorite_default(names: &crate::place_names::Names, places: &[Place], path: &Path) -> String {
     places.iter().find(|p| p.path == path).map_or_else(
-        || display_name(path),
+        || crate::win::known_folder_label(path).unwrap_or_else(|| display_name(path)),
         |p| crate::place_names::place_label(names, p),
     )
 }

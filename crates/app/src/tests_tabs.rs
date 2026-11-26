@@ -475,6 +475,7 @@ fn the_workspace_name_comes_back_with_the_session(cx: &mut TestAppContext) {
         fs,
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let (ws, cx) = cx.add_window_view(move |window, cx| {
         Workspace::new(
@@ -1457,6 +1458,7 @@ fn a_new_window_follows_startup_when_settings_are_already_read(cx: &mut TestAppC
             fs: Arc::clone(&fs) as Arc<dyn arke_core::fs::Fs>,
             shell: Arc::new(FakeShell::default()),
             remotes: crate::remote_shell::test_remotes(),
+            places: crate::explorer::new_places_cache(),
         };
         let (ws, vcx) = cx.add_window_view(move |window, cx| {
             Workspace::new(
@@ -2943,6 +2945,7 @@ fn restored_pinned_tabs_are_locked(cx: &mut TestAppContext) {
         fs,
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let (ws, cx) = cx.add_window_view(move |window, cx| {
         Workspace::new(

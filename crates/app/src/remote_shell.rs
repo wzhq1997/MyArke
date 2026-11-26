@@ -23,8 +23,8 @@ use parking_lot::Mutex;
 
 use crate::shell::{
     ClipboardFiles, CloudPin, CloudScan, DragImage, DragImageRequest, DragOutEnd, FileOp,
-    NetConnect, OpOutcome, OpProgress, PdfRender, PickRequest, Place, RecycledItem, Shell,
-    ShellError, ShellMenu, Undo,
+    NetConnect, OpOutcome, OpProgress, PdfRender, PickRequest, Place, PlacesStage, RecycledItem,
+    Shell, ShellError, ShellMenu, Undo,
 };
 
 /// Largest file opened from a server (it is downloaded first).
@@ -530,8 +530,13 @@ fn outcome(result: Result<(), ShellError>) -> Result<OpOutcome, ShellError> {
 
 impl Shell for RemoteShell {
     fn load_places(&self) -> Vec<Place> {
-        let mut places = self.inner.load_places();
-        places.extend(phone_places());
+        self.load_places_stage(PlacesStage::Full)
+    }
+    fn load_places_stage(&self, stage: PlacesStage) -> Vec<Place> {
+        let mut places = self.inner.load_places_stage(stage);
+        if stage == PlacesStage::Full {
+            places.extend(phone_places());
+        }
         places
     }
     fn quick_access_pinned(&self) -> Option<Vec<PathBuf>> {

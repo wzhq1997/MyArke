@@ -5115,13 +5115,13 @@ net.remember:
   pt-BR: Lembrar minhas credenciais (guardadas pelo Windows)
   ja: 資格情報を記憶する (Windows が保持)
 net.need_folder:
-  en: 'Enter a shared folder, like \\server\share'
-  zh-TW: "請輸入共用資料夾，例如 \\\\server\\share"
-  zh-CN: '请输入共享文件夹，例如 \\server\share'
-  de: "Geben Sie einen freigegebenen Ordner an, z. B. \\\\Server\\Freigabe"
-  es: "Escriba una carpeta compartida, como \\\\servidor\\recurso"
-  pt-BR: "Informe uma pasta compartilhada, como \\\\servidor\\pasta"
-  ja: "\\\\server\\share のような共有フォルダーを入力してください"
+  en: 'Enter a server or shared folder, like \\server or \\server\share'
+  zh-TW: "請輸入伺服器或共用資料夾，例如 \\\\server 或 \\\\server\\share"
+  zh-CN: '请输入服务器或共享文件夹，例如 \\server 或 \\server\share'
+  de: "Geben Sie einen Server oder eine Freigabe an, z. B. \\\\Server oder \\\\Server\\Freigabe"
+  es: "Escriba un servidor o carpeta compartida, como \\\\servidor o \\\\servidor\\recurso"
+  pt-BR: "Informe um servidor ou pasta compartilhada, como \\\\servidor ou \\\\servidor\\pasta"
+  ja: "\\\\server または \\\\server\\share のようなサーバー/共有フォルダーを入力してください"
 net.need_user:
   en: Enter a user name
   zh-TW: "請輸入使用者名稱"

@@ -297,7 +297,7 @@ fn main() -> std::process::ExitCode {
     }
     // Before app_main: no log file (it would hold %LOCALAPPDATA%\Arke open), residency or window.
     if args.get(1).map(String::as_str) == Some(uninstall::ARG) {
-        rust_i18n::set_locale(&win::ui_locale());
+        set_startup_locale();
         return uninstall::run_cli(&args[2..]);
     }
     // `arke.exe --api <json>`: asks the running Arke, prints its reply and exits (`api.rs`).
@@ -389,7 +389,9 @@ fn app_main(mut args: Args) {
     let launched_unix_ms = unix_ms_now();
     crashlog::init();
     motion::refresh_system_setting();
-    rust_i18n::set_locale(&win::ui_locale());
+    // Settings load in the background and may arrive after the first frame; the language cannot
+    // wait for them, or the window opens in the system language and switches every string later.
+    set_startup_locale();
     theme::set_mica_available(use_mica());
     // From here any filesystem call on this thread trips a debug assertion.
     arke_core::fs::mark_ui_thread();
@@ -552,6 +554,7 @@ fn app_main(mut args: Args) {
                 Arc::clone(&remotes),
             )),
             remotes,
+            places: crate::explorer::new_places_cache(),
         };
         // "Open in VS Code/Zed": check in the background whether they're installed.
         if bench.is_none() {
@@ -1297,8 +1300,23 @@ fn follow_update_route(store: &gpui::Entity<settings::SettingsStore>, cx: &mut A
 
 fn follow_language_setting(store: &gpui::Entity<settings::SettingsStore>, cx: &mut App) {
     let mut applied: Option<settings::Language> = None;
+    // Settings read within the startup wait are already there: apply them before the observer
+    // only hears later changes. A file still loading keeps the language from
+    // `settings::startup_language` rather than the defaults.
+    let loaded = {
+        let store = store.read(cx);
+        store.loaded.then_some(store.settings.language)
+    };
+    if let Some(language) = loaded {
+        applied = Some(language);
+        apply_language(&language.locale(), cx);
+    }
     cx.observe(store, move |store, cx| {
-        let language = store.read(cx).settings.language;
+        let store = store.read(cx);
+        if !store.loaded {
+            return;
+        }
+        let language = store.settings.language;
         if applied == Some(language) {
             return;
         }
@@ -1306,8 +1324,6 @@ fn follow_language_setting(store: &gpui::Entity<settings::SettingsStore>, cx: &m
         apply_language(&language.locale(), cx);
     })
     .detach();
-    // Also apply what is set now: the observer only hears later changes.
-    apply_language(&store.read(cx).settings.language.locale(), cx);
 }
 
 /// Starts looking up Windows' names for file types the built-in table doesn't have; windows
@@ -1329,6 +1345,17 @@ fn start_type_names(cx: &mut App) {
     .detach();
 }
 
+/// Sets the locale before the UI starts, from the saved Language setting (`ARKE_LANG` still wins
+/// in `Language::locale`). Windowless processes (uninstall, shell host, API) use it too, so their
+/// text matches the app.
+fn set_startup_locale() {
+    let locale = settings::startup_language().unwrap_or_default().locale();
+    // Windows read the fallbacks when they are built, so they must be ordered before the first
+    // frame too, not only in `apply_language`.
+    theme::set_ui_language(&locale, win::system_locale());
+    rust_i18n::set_locale(&locale);
+}
+
 /// Switches strings and the CJK font fallback order to `locale`, repainting if either changed.
 fn apply_language(locale: &str, cx: &mut App) {
     // Fonts follow the UI language so Simplified text gets Simplified glyphs on a Traditional
@@ -1340,6 +1367,9 @@ fn apply_language(locale: &str, cx: &mut App) {
         changed = true;
     }
     if changed {
+        // Place labels include translated drive types and known folders. Reload them so the cache
+        // a later window starts from is in the new language, not the old one.
+        workspace::reload_places_everywhere(cx);
         cx.refresh_windows();
     }
 }
@@ -1491,7 +1521,7 @@ fn run_shell_host() -> bool {
     {
         return false;
     }
-    rust_i18n::set_locale(&win::ui_locale());
+    set_startup_locale();
     shell_host::run();
     true
 }
@@ -1677,7 +1707,7 @@ fn apply_api(cx: &mut App, services: &Services, action: api::Action) {
 fn run_api_cli(json: &str) -> std::process::ExitCode {
     // A GUI program has no console of its own: write to the one it was started from.
     bench_index::console::attach();
-    rust_i18n::set_locale(&win::ui_locale());
+    set_startup_locale();
     api::print_reply(&api_cli_reply(json))
 }
 

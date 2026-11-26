@@ -34,6 +34,7 @@ fn setup_remote<'a>(
             Arc::clone(&remotes),
         )),
         remotes,
+        places: crate::explorer::new_places_cache(),
     };
     let start = PathBuf::from(start);
     cx.add_window_view(move |window, cx| {

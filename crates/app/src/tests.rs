@@ -1149,6 +1149,7 @@ fn setup<'a>(
         fs,
         shell,
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let start = PathBuf::from(start);
     let (host, cx) = cx.add_window_view(move |window, cx| {
@@ -2092,6 +2093,7 @@ fn setup_workspace_with<'a>(
         fs,
         shell,
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     setup_workspace_services(cx, services, PathBuf::from(start))
 }
@@ -2170,6 +2172,7 @@ fn restores_last_session_tabs(cx: &mut TestAppContext) {
         fs,
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let restore = session.clone();
     let (ws, cx) = cx.add_window_view(move |window, cx| {
@@ -2242,6 +2245,7 @@ fn restores_home_from_the_last_session(cx: &mut TestAppContext) {
         fs,
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let restore = session.clone();
     let (ws, cx) = cx.add_window_view(move |window, cx| {
@@ -2617,6 +2621,33 @@ fn network_drive_dialog_connects_in_the_background(cx: &mut TestAppContext) {
         shown.contains("bob") && !shown.contains("secret"),
         "{shown}"
     );
+
+    // A bare server is accepted too: sign in through IPC$, no drive letter, then list shares.
+    cx.update(|window, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.open_net_dialog(
+                NetDialogKind::Map {
+                    letters: vec!['Y', 'Z'],
+                },
+                None,
+                window,
+                cx,
+            );
+        });
+    });
+    cx.run_until_parked();
+    let dialog = ws
+        .update(cx, |ws, _| ws.net_dialog_for_test())
+        .expect("dialog should be open");
+    dialog.update(cx, |d, cx| {
+        d.fill_for_test(r"\\192.168.3.33", "bob", "secret", cx);
+    });
+    wait_for(cx, "bare server dialog did not close", &|cx| {
+        ws.update(cx, |ws, _| ws.net_dialog_for_test()).is_none()
+    });
+    let last = shell.net_connects.lock().last().unwrap().clone();
+    assert_eq!(last.share, PathBuf::from(r"\\192.168.3.33"));
+    assert_eq!(last.drive, None, "a bare server is not mounted as a drive");
 }
 
 /// Recycle bin page lists items newest first. Restore doesn't ask; permanent delete and empty
@@ -8816,6 +8847,7 @@ fn cold_window(
         fs,
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let start = session.tabs[0].panes[0].clone();
     cx.add_window_view(move |window, cx| {
