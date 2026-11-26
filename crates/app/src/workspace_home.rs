@@ -412,7 +412,8 @@ impl Workspace {
             .on_mouse_down(
                 gpui::MouseButton::Right,
                 cx.listener(|this, e: &gpui::MouseDownEvent, _, cx| {
-                    let items = super::sidebar::section_menu(SidebarSection::Home, cx);
+                    let places = this.active_view().read(cx).places.clone();
+                    let items = super::sidebar::section_menu(SidebarSection::Home, &places, cx);
                     this.open_sidebar_menu(e.position, items, cx);
                 }),
             );

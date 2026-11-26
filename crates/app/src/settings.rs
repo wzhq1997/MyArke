@@ -611,6 +611,9 @@ pub(crate) struct Settings {
     /// sidebar's empty space (#323).
     #[serde(deserialize_with = "known_sections")]
     pub(crate) hidden_sections: Vec<SidebarSection>,
+    /// This PC places (a user's profile folder or a cloud drive) hidden from the sidebar. Stored by
+    /// [`crate::place_names::key`], so a display name or a slash doesn't unhide them.
+    pub(crate) hidden_places: Vec<String>,
     pub(crate) accent: Accent,
     pub(crate) tint: Tint,
     pub(crate) material: Material,
@@ -845,6 +848,7 @@ impl Default for Settings {
             sidebar_follow: false,
             collapsed_sections: Vec::new(),
             hidden_sections: Vec::new(),
+            hidden_places: Vec::new(),
             font: String::new(),
             background_image: None,
             background_opacity: 20,
@@ -1668,6 +1672,39 @@ impl Settings {
         }
     }
 
+    /// Whether a This PC place is hidden from the sidebar.
+    pub(crate) fn is_place_hidden(&self, path: &Path) -> bool {
+        let key = crate::place_names::key(path);
+        self.hidden_places.iter().any(|k| k == &key)
+    }
+
+    /// Hides a This PC place, or shows it again. Returns whether anything changed.
+    pub(crate) fn set_place_hidden(&mut self, path: &Path, hidden: bool) -> bool {
+        let key = crate::place_names::key(path);
+        let at = self.hidden_places.iter().position(|k| k == &key);
+        match (hidden, at) {
+            (true, None) => {
+                self.hidden_places.push(key);
+                true
+            }
+            (false, Some(ix)) => {
+                self.hidden_places.remove(ix);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Shows a place hidden from the sidebar again, by its saved key.
+    pub(crate) fn show_place_key(&mut self, key: &str) -> bool {
+        if let Some(ix) = self.hidden_places.iter().position(|k| k == key) {
+            self.hidden_places.remove(ix);
+            true
+        } else {
+            false
+        }
+    }
+
     /// The windows of the last session that have something to restore, the one used last first;
     /// at most [`RESTORED_WINDOWS_MAX`].
     pub(crate) fn last_windows(&self) -> Vec<SessionWindow> {
@@ -2148,6 +2185,25 @@ mod tests {
         );
         s.set_hidden(SidebarSection::Favorites, false);
         assert!(s.hidden_sections.is_empty());
+    }
+
+    /// Hidden places are kept by normalized path, once each, and can be shown again by key.
+    #[test]
+    fn hidden_places_are_kept_by_key() {
+        let mut s = Settings::default();
+        assert!(s.hidden_places.is_empty());
+        let profile = PathBuf::from(r"C:\Users\wzhq");
+        assert!(s.set_place_hidden(&profile, true));
+        assert!(!s.set_place_hidden(&profile, true));
+        assert!(s.is_place_hidden(&profile));
+        assert!(s.is_place_hidden(Path::new(r"c:/users/wzhq/")));
+        let json = serde_json::to_string(&s).unwrap();
+        let mut back: Settings = serde_json::from_str(&json).unwrap();
+        let key = crate::place_names::key(&profile);
+        assert_eq!(back.hidden_places, vec![key.clone()]);
+        assert!(back.show_place_key(&key));
+        assert!(back.hidden_places.is_empty());
+        assert!(!back.show_place_key(&key));
     }
 
     /// A file with both the old switch and single window mode (an older Arke ran after 0.7 and

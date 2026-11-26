@@ -6924,6 +6924,22 @@ sidebar.hide_section:
   es: Ocultar
   pt-BR: Ocultar
   ja: 非表示
+sidebar.hide_place:
+  en: Hide from sidebar
+  zh-TW: 從側邊欄隱藏
+  zh-CN: 从侧边栏隐藏
+  de: Aus der Seitenleiste ausblenden
+  es: Ocultar de la barra lateral
+  pt-BR: Ocultar da barra lateral
+  ja: サイドバーから非表示
+sidebar.show_hidden_place:
+  en: "Show %{name} in sidebar"
+  zh-TW: "在側邊欄顯示 %{name}"
+  zh-CN: "在侧边栏显示 %{name}"
+  de: "%{name} in der Seitenleiste anzeigen"
+  es: "Mostrar %{name} en la barra lateral"
+  pt-BR: "Mostrar %{name} na barra lateral"
+  ja: "サイドバーに %{name} を表示"
 sidebar.pinned_hint:
   en: "Right-click a folder › Add to favorites"
   zh-TW: 在資料夾上按右鍵 →「加入最愛」
