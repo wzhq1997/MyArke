@@ -1,14 +1,15 @@
-# Manual build of the checked-out branch. No publish, no signing: the packaged files are
-# uploaded as a workflow artifact. Dispatch with ref=oh-my-arke to build the 0.9.3 sources;
-# the stable channel takes its version from Cargo.toml and its notes from CHANGELOG.md.
-# This file must also live on the default branch (main) for workflow_dispatch to be available.
+# Manual build of the checked-out branch. No release publish, no signing: the packaged files
+# are uploaded as an artifact and mirrored to the `builds` branch so they can be fetched over
+# SSH. Dispatch with ref=oh-my-arke to build the 0.9.3 sources; stable takes its version from
+# Cargo.toml and its notes from CHANGELOG.md. The file must live on the default branch
+# (oh-my-arke) for workflow_dispatch to be available.
 name: branch build
 
 on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: branch-build-${{ github.ref }}
@@ -43,3 +44,25 @@ jobs:
           path: dist/
           if-no-files-found: error
           retention-days: 14
+      # Mirror the packages into a standalone `builds` branch. The local script fetches this
+      # branch over SSH, so no browser or artifact API download is needed on this machine.
+      - name: publish to builds branch
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          work="$RUNNER_TEMP/builds"
+          rm -rf "$work"
+          mkdir -p "$work"
+          cp -R dist/. "$work/"
+          cd "$work"
+          git init -q -b builds
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "build ${{ github.ref_name }} ${{ github.sha }}"
+          git remote add origin "https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}.git"
+          git push -q --force origin HEAD:builds
+          echo "published to builds:"
+          ls -lh
