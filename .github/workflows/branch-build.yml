@@ -1,0 +1,45 @@
+# Manual build of the checked-out branch. No publish, no signing: the packaged files are
+# uploaded as a workflow artifact. Dispatch with ref=oh-my-arke to build the 0.9.3 sources;
+# the stable channel takes its version from Cargo.toml and its notes from CHANGELOG.md.
+# This file must also live on the default branch (main) for workflow_dispatch to be available.
+name: branch build
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: branch-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          shared-key: release-x64
+          workspaces: ". -> target/dist"
+      # cargo xtask build regenerates THIRD_PARTY_LICENSES.md through cargo-about.
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-about
+      # Produces arke-<version>-setup.exe as well; remove this step for exe-only builds.
+      - uses: ./.github/actions/install-inno-setup
+      - name: build
+        shell: bash
+        run: |
+          cargo xtask build stable --arch x64
+          ls -l dist
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: arke-stable-${{ github.ref_name }}-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 14
