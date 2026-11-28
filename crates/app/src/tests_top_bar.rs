@@ -697,6 +697,19 @@ fn horizontal_tabs_share_one_row_with_the_title_bar(cx: &mut TestAppContext) {
         tab.left() >= strip.left() - px(1.) && tab.right() <= strip.right() + px(1.),
         "the active (last) tab is in view: {tab:?} in {strip:?}"
     );
+
+    // An unselected tab fills the same row, so its title is centered vertically too.
+    let inactive = last - 1;
+    let tab = cx
+        .debug_bounds(Box::leak(format!("tab-{inactive}").into_boxed_str()))
+        .expect("the inactive tab is drawn");
+    let title = cx
+        .debug_bounds(Box::leak(format!("tab-title-{inactive}").into_boxed_str()))
+        .expect("the inactive tab's title is drawn");
+    assert!(
+        near(title.center().y, tab.center().y, 1.),
+        "an inactive top tab centers its title: {title:?} in {tab:?}"
+    );
 }
 
 #[gpui::test]

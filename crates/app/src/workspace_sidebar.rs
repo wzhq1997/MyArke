@@ -4845,8 +4845,9 @@ impl Workspace {
             .id(self.tab_row_id(ix))
             .debug_selector(|| format!("tab-{ix}"))
             .group(group.clone())
-            .h(if horizontal && active {
-                // On top the selected tab fills the row, so its paper joins the sheet below.
+            .h(if horizontal {
+                // In the top strip every tab fills the slot, so its title is vertically
+                // centered; the selected one's paper then joins the sheet below.
                 theme::h_bar()
             } else if split {
                 row_h + theme::s_8()
