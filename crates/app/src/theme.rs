@@ -15,7 +15,7 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use arke_core::filetype::FileKind;
-use gpui::{BoxShadow, FontWeight, Hsla, Pixels, Rgba, point, px};
+use gpui::{BoxShadow, FontWeight, Hsla, Pixels, Rgba, Styled, point, px};
 
 use crate::assets::Icon;
 
@@ -410,6 +410,12 @@ scaled!(r_8, 8.);
 scaled!(r_12, 12.);
 /// Pills, progress bars.
 pub(crate) const R_FULL: Pixels = px(999.);
+/// Top tab of the merged row: rounded above, square below so it joins the sheet underneath.
+/// Radii are set on the style directly: `.rounded_t` / `.rounded_b_none` are ad hoc radii that
+/// `tests::ui_code_uses_theme_tokens` rejects outside this file.
+pub(crate) fn joined_tab<T: Styled>(el: T) -> T {
+    el.rounded_t(r_8()).rounded_b_none()
+}
 /// Line height (relative to the font size) for text in a box shorter than the default line
 /// (1.618): the rename box in a compact row. Still above the UI fonts' ascent plus descent
 /// (about 1.33 for Segoe UI and the CJK fallbacks), so nothing is cut off.

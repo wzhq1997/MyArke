@@ -5307,12 +5307,7 @@ fn here_layer() -> AnyElement {
 /// content sheet (same div, same color), so the two composite to one surface under Mica too. A
 /// short line in the chosen accent colors the selection without a heavy fill.
 fn joined_tab_surface() -> AnyElement {
-    div()
-        .absolute()
-        .inset_0()
-        .rounded_t(theme::r_8())
-        .rounded_b_none()
-        .bg(theme::paper())
+    theme::joined_tab(div().absolute().inset_0().bg(theme::paper()))
         .child(
             div()
                 .absolute()
