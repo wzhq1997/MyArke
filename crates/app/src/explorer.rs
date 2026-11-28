@@ -2152,7 +2152,7 @@ impl Explorer {
                     // Quick Access pins are added to favorites once, with the complete list.
                     crate::quick_access::refresh(&self.services.shell, places.clone(), cx);
                 }
-                *self.services.places.write() = places.clone();
+                (*self.services.places.write()).clone_from(&places);
                 self.places = places;
                 self.folder_view_on_places(cx);
                 cx.notify();

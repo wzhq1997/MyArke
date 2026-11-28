@@ -388,6 +388,10 @@ impl Shell for FakeShell {
         Ok(OpOutcome::Done)
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one short arm per kind of file operation"
+    )]
     fn file_op_undoable(
         &self,
         op: &FileOp,

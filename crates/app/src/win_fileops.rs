@@ -1176,6 +1176,10 @@ fn forget_recycled<'a>(places: impl Iterator<Item = &'a str>) {
 
 /// Runs `op` through the copy engine. Items to delete that the engine can't even take (their
 /// names, say) go to `skipped` while the rest still run; items already gone are left out.
+#[allow(
+    clippy::too_many_lines,
+    reason = "one short arm per kind of file operation"
+)]
 fn run(
     op: &FileOp,
     owner: Option<isize>,
@@ -1327,6 +1331,7 @@ unsafe fn advise_finish(
     silent: bool,
     sink: Option<&IFileOperationProgressSink>,
 ) -> Result<OpOutcome, ShellError> {
+    // SAFETY: COM is initialized on this thread and `fo` was created on it by `run`.
     unsafe {
         let cookie = sink.and_then(|sink| fo.Advise(sink).ok());
         let result = finish(fo, flags, owner, silent);

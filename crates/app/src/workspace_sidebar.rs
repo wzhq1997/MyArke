@@ -725,20 +725,20 @@ fn list_server_shares(
     show_hidden: bool,
 ) -> Vec<PathBuf> {
     let root = PathBuf::from(format!(r"\\{server}"));
-    let mut shares: Vec<PathBuf> = probe
-        .shares(server)
-        .map(|shares| {
+    let mut shares: Vec<PathBuf> = probe.shares(server).map_or_else(
+        |err| {
+            log::info!("sidebar: listing shares of {server} failed: {err}");
+            Vec::new()
+        },
+        |shares| {
             arke_core::net::share_entries(&shares)
                 .into_iter()
                 .filter(|e| e.is_dir_like() && (show_hidden || !e.is_hidden()))
                 .map(|e| root.join(&*e.name))
                 .take(TREE_MAX_CHILDREN)
                 .collect()
-        })
-        .unwrap_or_else(|err| {
-            log::info!("sidebar: listing shares of {server} failed: {err}");
-            Vec::new()
-        });
+        },
+    );
     // Same natural order as other tree children.
     shares.sort_by(|a, b| {
         arke_core::sort::natural_cmp(
@@ -3655,8 +3655,7 @@ impl Workspace {
                 let name = places
                     .iter()
                     .find(|p| crate::place_names::key(&p.path) == *key)
-                    .map(|p| p.label.clone())
-                    .unwrap_or_else(|| display_name(Path::new(key)));
+                    .map_or_else(|| display_name(Path::new(key)), |p| p.label.clone());
                 items.push(row(
                     t!("sidebar.show_hidden_place", name = name),
                     SidebarAction::ShowPlace(key.clone()),
