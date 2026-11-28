@@ -3358,7 +3358,8 @@ impl Workspace {
         let spawned = std::thread::Builder::new()
             .name("tree".into())
             .spawn(move || {
-                if let Some((probe, server)) = probe.as_deref().zip(arke_core::net::share_server(&dir))
+                if let Some((probe, server)) =
+                    probe.as_deref().zip(arke_core::net::share_server(&dir))
                 {
                     let _ = tx.send((list_server_shares(probe, server, show_hidden), Vec::new()));
                 } else {
@@ -3991,16 +3992,22 @@ impl Workspace {
                 self.sidebar_ui.tree_auto.remove(&path);
                 self.expanded.remove(&path);
                 SettingsStore::global(cx).update(cx, |s, cx| {
-                    s.update(|st| {
-                        st.set_place_hidden(&path, true);
-                    }, cx);
+                    s.update(
+                        |st| {
+                            st.set_place_hidden(&path, true);
+                        },
+                        cx,
+                    );
                 });
             }
             SidebarAction::ShowPlace(key) => {
                 SettingsStore::global(cx).update(cx, |s, cx| {
-                    s.update(|st| {
-                        st.show_place_key(&key);
-                    }, cx);
+                    s.update(
+                        |st| {
+                            st.show_place_key(&key);
+                        },
+                        cx,
+                    );
                 });
             }
             SidebarAction::OpenFile(path) => {

@@ -1,6 +1,6 @@
 # Manual build of the checked-out branch. No release publish, no signing: the packaged files
 # are uploaded as an artifact and mirrored to the `builds` branch so they can be fetched over
-# SSH. Dispatch with ref=oh-my-arke to build the 0.9.3 sources; stable takes its version from
+# SSH. Dispatch with ref=oh-my-arke to build this branch's sources; stable takes its version from
 # Cargo.toml and its notes from CHANGELOG.md. The file must live on the default branch
 # (oh-my-arke) for workflow_dispatch to be available.
 name: branch build

@@ -646,7 +646,10 @@ fn a_server_expands_into_its_shares(cx: &mut TestAppContext) {
     refresh(cx);
     assert!(shows(cx, r"\\nas"), "the server is a root row");
     assert!(
-        !shows(cx, &t!("sidebar.share_label", share = "team", server = "nas")),
+        !shows(
+            cx,
+            &t!("sidebar.share_label", share = "team", server = "nas")
+        ),
         "the visited share is not drawn as a second root"
     );
 

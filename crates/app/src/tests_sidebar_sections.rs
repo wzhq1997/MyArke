@@ -814,7 +814,10 @@ fn places_hide_from_their_rows_and_come_back(cx: &mut TestAppContext) {
     let at = bounds(cx, "tab-list-end").center();
     right_click(cx, at);
     let labels = menu(&ws, cx).expect("a menu");
-    assert!(labels.contains(&show_wzhq) && labels.contains(&show_cloud), "{labels:?}");
+    assert!(
+        labels.contains(&show_wzhq) && labels.contains(&show_cloud),
+        "{labels:?}"
+    );
     pick(&ws, cx, &show_wzhq);
     assert!(drawn(cx, "sidebar wzhq"), "back");
     assert_eq!(
