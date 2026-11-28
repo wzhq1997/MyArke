@@ -41,6 +41,22 @@ use crate::theme::{self, UiFont as _};
 use crate::workspace::{Tooltip, TooltipBelowExt as _};
 use std::rc::Rc;
 
+/// Width of a tab title in the same font used to draw it.
+fn tab_text_width(text: &str, size: Pixels, window: &Window) -> Pixels {
+    let run = gpui::TextRun {
+        len: text.len(),
+        font: theme::ui_font_at(gpui::FontWeight::NORMAL),
+        color: gpui::Hsla::default(),
+        background_color: None,
+        underline: None,
+        strikethrough: None,
+    };
+    window
+        .text_system()
+        .shape_line(SharedString::from(text.to_owned()), size, &[run], None)
+        .width
+}
+
 /// One tree indent level.
 fn tree_indent() -> gpui::Pixels {
     crate::theme::scaled_px(16.)
@@ -4639,11 +4655,48 @@ impl Workspace {
         items
     }
 
+    /// Tab title with a tooltip only when the text is actually clipped. A canvas probe records the
+    /// width the title can use; the tooltip builder measures the whole string in the same font and
+    /// shows an empty view when it fits, so short titles produce no tooltip at all.
+    fn tab_title_with_tip(id: usize, title: SharedString, size: Pixels) -> Stateful<Div> {
+        let visible: Rc<std::cell::Cell<Option<Pixels>>> = Rc::new(std::cell::Cell::new(None));
+        let probe = Rc::clone(&visible);
+        let tip = title.clone();
+        div()
+            .id(("tab-title", id))
+            .debug_selector(move || format!("tab-title-{id}"))
+            .min_w_0()
+            .truncate()
+            .child(title)
+            .child(
+                canvas(
+                    move |bounds, _, _| probe.set(Some(bounds.size.width)),
+                    |_, (), _, _| {},
+                )
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full(),
+            )
+            .tooltip(move |window, cx| {
+                let full = tab_text_width(tip.as_ref(), size, window);
+                let clipped = visible.get().is_some_and(|width| full > width + px(1.));
+                if clipped {
+                    cx.new(|_| Tooltip(tip.clone())).into()
+                } else {
+                    // gpui's tooltip builder can't return `None`; an empty view has zero size and
+                    // paints no card.
+                    cx.new(|_| gpui::EmptyView).into()
+                }
+            })
+    }
+
     /// Dual-pane tab: one row split in half, the active half tinted; clicking a half focuses that pane.
     fn tab_halves(
         ix: usize,
         active_pane: Option<usize>,
         titles: Vec<SharedString>,
+        size: Pixels,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         titles
@@ -4662,7 +4715,7 @@ impl Workspace {
                     .rounded(theme::r_4())
                     .when(active_pane == Some(pane), |d| d.bg(theme::signal_wash()))
                     .child(kind_icon(FileKind::Folder, theme::icon()))
-                    .child(div().min_w_0().truncate().child(title))
+                    .child(Self::tab_title_with_tip(ix * 2 + pane, title, size))
                     .on_click(cx.listener(move |this, _: &ClickEvent, window, cx| {
                         cx.stop_propagation();
                         this.activate_pane(ix, pane, window, cx);
@@ -4764,6 +4817,11 @@ impl Workspace {
         let tab: &Tab = &self.tabs[ix];
         let active = ix == self.active;
         let split = tab.is_split();
+        let title_size = if tab.pinned {
+            theme::fs_13()
+        } else {
+            theme::fs_14()
+        };
         let horizontal = Self::horizontal_tabs(cx);
         let group = SharedString::from(format!("tab-{ix}"));
         // Tabs showing Home, Settings or the Recycle Bin use that page's name.
@@ -4800,10 +4858,7 @@ impl Workspace {
             })
             .when(tab.pinned, |d| d.text_size(theme::fs_13()))
             .flex()
-            // In the top strip the slot sets the width, so the row shrinks with it and the title
-            // truncates instead of spilling past the scrollable area.
-            .when(horizontal, |d| d.flex_1().min_w_0())
-            .when(!horizontal, |d| d.flex_none())
+            .flex_none()
             .items_center()
             .gap(theme::s_4())
             .pl(if horizontal {
@@ -4890,13 +4945,11 @@ impl Workspace {
         let row = row
             .a11y(gpui::Role::Tab, drag_title.clone())
             .aria_selected(active)
-            // The sidebar's tab titles are only the folder's name: the full path is on hover.
-            .when_some(
-                (!Self::horizontal_tabs(cx))
-                    .then(|| self.tab_tip(ix, cx))
-                    .flatten(),
-                |d, tip| d.aria_description(tip.clone()).tooltip(tooltip_text(tip)),
-            );
+            // The sidebar's tab titles are only the folder's name; the full path is for screen
+            // readers. The visible tooltip comes from the title itself, only when it is clipped.
+            .when_some((!horizontal).then(|| self.tab_tip(ix, cx)).flatten(), |d, tip| {
+                d.aria_description(tip)
+            });
         let row = row.on_drag(
             DraggedTab {
                 ix,
@@ -4915,6 +4968,7 @@ impl Workspace {
                 ix,
                 active.then_some(tab.active_pane),
                 titles,
+                title_size,
                 cx,
             ))
         } else {
@@ -4933,9 +4987,13 @@ impl Workspace {
                     .into_any_element(),
                 None => kind_icon(FileKind::Folder, theme::icon()),
             };
-            row.gap(if horizontal { theme::s_6() } else { theme::s_8() })
-                .child(icon)
-                .child(div().flex_1().min_w_0().truncate().child(title))
+            row.gap(if horizontal {
+                theme::s_6()
+            } else {
+                theme::s_8()
+            })
+            .child(icon)
+            .child(Self::tab_title_with_tip(ix, title, title_size).flex_1())
         };
         let row = if tab.pinned {
             // Pinned: a pin instead of the close button, always shown; clicking it unpins.

@@ -3663,10 +3663,10 @@ impl Workspace {
                 // Pinned tabs are narrow and don't shrink, like a browser's. The unpinned ones
                 // shrink only down to a readable title before the strip scrolls.
                 let pinned = self.tabs[ix].pinned;
+                // Keep the slot a plain block: the tab row inside sizes itself to the slot, so a
+                // long title truncates instead of stretching the strip.
                 div()
                     .h(theme::h_bar())
-                    .flex()
-                    .items_center()
                     .when(pinned, |d| d.w(crate::theme::scaled_px(112.)).flex_none())
                     .when(!pinned, |d| {
                         d.w(crate::theme::scaled_px(180.))
