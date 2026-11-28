@@ -95,6 +95,7 @@ fn save_and_check(tag: &str, save: fn(&Path, &str), cx: &mut TestAppContext) {
         fs: Arc::new(RealFs),
         shell: Arc::new(FakeShell::default()),
         remotes: crate::remote_shell::test_remotes(),
+        places: crate::explorer::new_places_cache(),
     };
     let here = folder.0.to_str().expect("a UTF-8 path").to_owned();
     let (ws, cx) = setup_workspace_services(cx, services, folder.0);
